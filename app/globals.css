@@ -1,0 +1,25 @@
+@import "tailwindcss";
+
+:root {
+  color-scheme: dark;
+}
+
+body {
+  background: #0A0E1A;
+  color: #A3B3D1;
+}
+
+.no-scrollbar::-webkit-scrollbar { display: none; }
+.no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+
+/* Görünür, tema ile uyumlu yatay scroll bar — geniş tablolar/şeritler
+   (ör. bayi katalog tablosu) mobilde/dar ekranda sağa-sola kaydırılabilsin
+   diye ve kullanıcı daha fazla sütun/kart olduğunu görsün diye. */
+.h-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: #2A3650 transparent;
+}
+.h-scroll::-webkit-scrollbar { height: 8px; }
+.h-scroll::-webkit-scrollbar-track { background: rgba(19,28,44,0.5); border-radius: 999px; }
+.h-scroll::-webkit-scrollbar-thumb { background: #2A3650; border-radius: 999px; }
+.h-scroll::-webkit-scrollbar-thumb:hover { background: #D4AF37; }

@@ -1,0 +1,39 @@
+{
+  "name": "dampingvar-nextjs",
+  "private": true,
+  "version": "0.1.0",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint",
+    "test:rls": "vitest run --config vitest.config.ts",
+    "db:new": "supabase migration new",
+    "db:diff": "supabase db diff --schema public",
+    "db:push": "supabase db push",
+    "db:pull": "supabase db pull",
+    "db:reset": "supabase db reset"
+  },
+  "dependencies": {
+    "@supabase/ssr": "^0.5.2",
+    "@supabase/supabase-js": "^2.50.0",
+    "framer-motion": "^11.18.2",
+    "iyzipay": "^2.0.55",
+    "livekit-client": "^2.9.5",
+    "next": "15.1.12",
+    "react": "19.0.0",
+    "react-dom": "19.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "22.19.17",
+    "@types/react": "19.0.1",
+    "@types/react-dom": "19.0.2",
+    "@types/iyzipay": "^2.0.3",
+    "tailwindcss": "^4.1.17",
+    "@tailwindcss/postcss": "^4.1.17",
+    "typescript": "5.9.3",
+    "vitest": "^2.1.9",
+    "dotenv": "^16.4.7",
+    "supabase": "^1.226.4"
+  }
+}

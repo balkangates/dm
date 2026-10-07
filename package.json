@@ -12,7 +12,10 @@
     "db:push": "supabase db push",
     "db:pull": "supabase db pull",
     "db:reset": "supabase db reset",
-    "db:verify": "tsx scripts/verify-db.ts"
+    "db:verify": "tsx scripts/verify-db.ts",
+    "db:types": "tsx scripts/gen-supabase-types.ts",
+    "db:schema": "tsx scripts/verify-schema.ts",
+    "supabase:verify": "NODE_OPTIONS=--conditions=react-server tsx scripts/verify-supabase.ts"
   },
   "dependencies": {
     "@supabase/ssr": "^0.12.7",

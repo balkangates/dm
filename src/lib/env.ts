@@ -1,7 +1,7 @@
 /**
  * Ortam değişkenleri — TEK kaynak.
  *
- * Kural: SUPABASE_SERVICE_ROLE_KEY ve DATABASE_URL yalnızca sunucuda okunur
+ * Kural: SUPABASE_SERVICE_ROLE_KEY yalnızca sunucuda okunur
  * (bkz. env.server.ts). Bu dosya yalnızca NEXT_PUBLIC_* değerlerini içerir ve
  * istemci bundle'ına girebilir.
  *

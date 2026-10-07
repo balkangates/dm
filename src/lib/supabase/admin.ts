@@ -6,10 +6,11 @@ import "server-only";
 import { createClient } from "@supabase/supabase-js";
 import { getPublicSupabaseEnv } from "@/lib/env";
 import { requireServiceRoleKey } from "@/lib/env.server";
+import type { Database } from "@/lib/supabase/types";
 
 export function createAdminClient() {
   const { url } = getPublicSupabaseEnv();
-  return createClient(url, requireServiceRoleKey(), {
+  return createClient<Database>(url, requireServiceRoleKey(), {
     auth: { autoRefreshToken: false, persistSession: false },
   });
 }

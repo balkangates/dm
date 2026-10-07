@@ -1,3 +1,9 @@
+/**
+ * LEGACY MIGRATION ONLY
+ * DO NOT USE FOR NEW CODE
+ * REMOVE IN PHASE 05 (caller'lar Faz 03-04'te Supabase'e taşınır; silme Faz 05)
+ * Yeni kod yalnızca src/lib/supabase/{client,server,admin}.ts kullanır.
+ */
 import {
   pgTable,
   uuid,

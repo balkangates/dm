@@ -12,9 +12,7 @@ import { buildSnapshot } from "@/lib/snapshot";
 import { getBusinessBySlug, getBusinessStats } from "@/lib/queries";
 import { resolveActor, can, deny } from "@/lib/auth";
 import { logAudit } from "@/lib/finance";
-import { db } from "@/db";
-import { aiContents, marketingPlanDays, marketingPlans } from "@/db/schema";
-import { eq } from "drizzle-orm";
+import { createClient } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
 
@@ -33,13 +31,14 @@ export async function POST(req: Request) {
 
   const snapshot = await buildSnapshot(biz);
   const goal = String(body.goal ?? "Bu hafta müşteri sayısını artırmak istiyorum.");
+  const supabase = await createClient();
 
   if (action === "kampanya") {
     const suggestion = suggestCampaign(snapshot, goal);
-    const [row] = await db
-      .insert(aiContents)
-      .values({
-        businessId: biz.id,
+    const { data: row, error } = await supabase
+      .from("ai_contents")
+      .insert({
+        business_id: biz.id,
         kind: "CAMPAIGN",
         platform: "DampingVar",
         title: suggestion.title,
@@ -49,7 +48,9 @@ export async function POST(req: Request) {
         meta: { ...suggestion },
         status: "DRAFT",
       })
-      .returning();
+      .select()
+      .single();
+    if (error) return Response.json({ ok: false, error: error.message }, { status: 500 });
     await logAudit(actor.email, actor.role, "AI_CAMPAIGN_GENERATED", "ai_contents", row.id, { goal });
     return Response.json({ ok: true, suggestion, content: row });
   }
@@ -57,19 +58,23 @@ export async function POST(req: Request) {
   if (action === "sosyal") {
     const platform = String(body.platform ?? "Instagram");
     const content = generateSocial(snapshot, platform);
-    const [row] = await db
-      .insert(aiContents)
-      .values({ ...content, businessId: biz.id, status: "DRAFT" })
-      .returning();
+    const { data: row, error } = await supabase
+      .from("ai_contents")
+      .insert({ ...content, business_id: biz.id, status: "DRAFT" })
+      .select()
+      .single();
+    if (error) return Response.json({ ok: false, error: error.message }, { status: 500 });
     return Response.json({ ok: true, content: row });
   }
 
   if (action === "story") {
     const content = generateStory(snapshot);
-    const [row] = await db
-      .insert(aiContents)
-      .values({ ...content, businessId: biz.id, status: "DRAFT" })
-      .returning();
+    const { data: row, error } = await supabase
+      .from("ai_contents")
+      .insert({ ...content, business_id: biz.id, status: "DRAFT" })
+      .select()
+      .single();
+    if (error) return Response.json({ ok: false, error: error.message }, { status: 500 });
     return Response.json({ ok: true, content: row });
   }
 
@@ -77,10 +82,10 @@ export async function POST(req: Request) {
     const variants = generateAdVariants(snapshot);
     const rows = [];
     for (const v of variants) {
-      const [row] = await db
-        .insert(aiContents)
-        .values({
-          businessId: biz.id,
+      const { data: row, error } = await supabase
+        .from("ai_contents")
+        .insert({
+          business_id: biz.id,
           kind: "AD",
           platform: "DampingVar Reklam Ağı",
           title: `${v.variant} — ${v.angle}`,
@@ -90,7 +95,9 @@ export async function POST(req: Request) {
           meta: { angle: v.angle, headline: v.headline },
           status: "DRAFT",
         })
-        .returning();
+        .select()
+        .single();
+      if (error) return Response.json({ ok: false, error: error.message }, { status: 500 });
       rows.push(row);
     }
     return Response.json({ ok: true, variants: rows });
@@ -98,10 +105,10 @@ export async function POST(req: Request) {
 
   if (action === "video") {
     const script = generateVideoScript(snapshot, body.focus ? String(body.focus) : undefined);
-    const [row] = await db
-      .insert(aiContents)
-      .values({
-        businessId: biz.id,
+    const { data: row, error } = await supabase
+      .from("ai_contents")
+      .insert({
+        business_id: biz.id,
         kind: "VIDEO",
         platform: "Instagram Reels / TikTok",
         title: script.title,
@@ -110,30 +117,38 @@ export async function POST(req: Request) {
         meta: { durationSec: script.durationSec, scenes: script.scenes },
         status: "DRAFT",
       })
-      .returning();
+      .select()
+      .single();
+    if (error) return Response.json({ ok: false, error: error.message }, { status: 500 });
     return Response.json({ ok: true, script, content: row });
   }
 
   if (action === "plan") {
-    const existing = await db.select().from(marketingPlans).where(eq(marketingPlans.businessId, biz.id));
-    if (existing[0]) {
-      await db.delete(marketingPlanDays).where(eq(marketingPlanDays.planId, existing[0].id));
-      await db.delete(marketingPlans).where(eq(marketingPlans.id, existing[0].id));
+    const { data: existing } = await supabase
+      .from("marketing_plans")
+      .select("*")
+      .eq("business_id", biz.id);
+    if (existing && existing[0]) {
+      await supabase.from("marketing_plan_days").delete().eq("plan_id", existing[0].id);
+      await supabase.from("marketing_plans").delete().eq("id", existing[0].id);
     }
-    const [plan] = await db
-      .insert(marketingPlans)
-      .values({
-        businessId: biz.id,
+    const { data: plan, error: planError } = await supabase
+      .from("marketing_plans")
+      .insert({
+        business_id: biz.id,
         title: `28 Günlük DampingVar Pazarlama Planı — ${biz.district}`,
         goal,
-        sectorKey: biz.sectorKey,
+        sector_key: biz.sector_key,
         status: "ACTIVE",
       })
-      .returning();
+      .select()
+      .single();
+    if (planError) return Response.json({ ok: false, error: planError.message }, { status: 500 });
+
     const days = buildMarketingPlan(snapshot);
     for (const d of days) {
-      await db.insert(marketingPlanDays).values({
-        planId: plan.id,
+      const { error: dayError } = await supabase.from("marketing_plan_days").insert({
+        plan_id: plan.id,
         day: d.day,
         theme: d.theme,
         task: d.task,
@@ -142,6 +157,7 @@ export async function POST(req: Request) {
         cta: d.cta,
         done: false,
       });
+      if (dayError) return Response.json({ ok: false, error: dayError.message }, { status: 500 });
     }
     await logAudit(actor.email, actor.role, "AI_PLAN_GENERATED", "marketing_plans", plan.id, { goal });
     return Response.json({ ok: true, plan, days });
@@ -159,17 +175,20 @@ export async function POST(req: Request) {
     const id = String(body.contentId);
     const status = action === "onayla" ? "APPROVED" : action === "yayinla" ? "PUBLISHED" : "REJECTED";
     if (!can(actor.role, "content.approve")) return deny(actor.role, "content.approve");
-    const [row] = await db
-      .update(aiContents)
-      .set({ status, approvedAt: action === "reddet" ? null : new Date() })
-      .where(eq(aiContents.id, id))
-      .returning();
+    const { data: row, error } = await supabase
+      .from("ai_contents")
+      .update({ status, approved_at: action === "reddet" ? null : new Date() })
+      .eq("id", id)
+      .select()
+      .single();
+    if (error) return Response.json({ ok: false, error: error.message }, { status: 500 });
     await logAudit(actor.email, actor.role, `AI_CONTENT_${status}`, "ai_contents", id, {});
     return Response.json({ ok: true, content: row });
   }
 
   if (action === "sil") {
-    await db.delete(aiContents).where(eq(aiContents.id, String(body.contentId)));
+    const { error } = await supabase.from("ai_contents").delete().eq("id", String(body.contentId));
+    if (error) return Response.json({ ok: false, error: error.message }, { status: 500 });
     await logAudit(actor.email, actor.role, "AI_CONTENT_DELETED", "ai_contents", String(body.contentId), {});
     return Response.json({ ok: true });
   }

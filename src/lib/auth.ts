@@ -1,6 +1,4 @@
-import { eq } from "drizzle-orm";
-import { db } from "@/db";
-import { businessStaff } from "@/db/schema";
+import { createClient } from "@/lib/supabase/server";
 
 export type Actor = { email: string; name: string; role: string; businessId: string };
 
@@ -9,11 +7,13 @@ export type Actor = { email: string; name: string; role: string; businessId: str
  * business_staff tablosundan okunur.
  */
 export async function resolveActor(businessId: string, email: string): Promise<Actor | null> {
-  const rows = await db
-    .select()
-    .from(businessStaff)
-    .where(eq(businessStaff.businessId, businessId));
-  const row = rows.find((r) => r.email.toLowerCase() === (email ?? "").toLowerCase() && r.active);
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("business_staff")
+    .select("*")
+    .eq("business_id", businessId);
+  if (error) return null;
+  const row = data?.find((r) => r.email.toLowerCase() === (email ?? "").toLowerCase() && r.active);
   if (!row) return null;
   return { email: row.email, name: row.name, role: row.role, businessId };
 }

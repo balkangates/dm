@@ -1,12 +1,12 @@
-import { db } from "@/db";
-import { sql } from "drizzle-orm";
+import { createClient } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
 
 export async function GET() {
   try {
-    await db.execute(sql`select 1`);
-    return Response.json({ ok: true });
+    const supabase = await createClient();
+    const { error } = await supabase.rpc("health_check");
+    return Response.json({ ok: !error });
   } catch {
     return Response.json({ ok: false }, { status: 500 });
   }

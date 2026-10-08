@@ -13,13 +13,10 @@ import {
   Star,
   Sparkles,
 } from "lucide-react";
-import { db } from "@/db";
-import { analyticsEvents, products } from "@/db/schema";
-import { eq } from "drizzle-orm";
 import { Logo, MapSketch, Pill, Rating, SectionTitle, Stamp, Btn } from "@/components/ui";
 import QrOffer from "@/components/QrOffer";
-import { getBusinessBySlug, getBusinessBundle } from "@/lib/queries";
-import { DAY_NAMES, isOpenNow, openLabel } from "@/lib/format";
+import { getBusinessBySlug, getBusinessBundle, recordEvent } from "@/lib/queries";
+import { DAY_NAMES, isOpenNow, openLabel, convertHourRow } from "@/lib/format";
 
 export const dynamic = "force-dynamic";
 
@@ -59,15 +56,13 @@ export default async function BusinessPage({ params }: Params) {
 
   const bundle = await getBusinessBundle(biz);
   const now = new Date();
-  const open = isOpenNow(bundle.hours, now);
+  const hours = bundle.hours.map(convertHourRow);
+  const open = isOpenNow(hours, now);
 
-  await db
-    .insert(analyticsEvents)
-    .values({ kind: "business_view", businessId: biz.id, meta: { slug: biz.slug, source: "dijital-vitrin" } })
-    .catch(() => undefined);
+  await recordEvent("business_view", biz.id, null, null, { slug: biz.slug, source: "dijital-vitrin" });
 
   const activeCampaigns = bundle.campaigns.filter((c) => c.status === "PUBLISHED");
-  const featured = bundle.products.find((p) => p.discountPriceCents != null) ?? bundle.products[0] ?? null;
+  const featured = bundle.products.find((p) => p.discount_price_cents != null) ?? bundle.products[0] ?? null;
   const normalPrice = featured?.priceCents ?? 0;
   const dampingPrice = featured?.discountPriceCents ?? featured?.priceCents ?? 0;
   const percent = normalPrice ? Math.round((1 - dampingPrice / normalPrice) * 100) : 0;

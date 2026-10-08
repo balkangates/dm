@@ -2,8 +2,7 @@ import PanelShell from "@/components/PanelShell";
 import { panelContext } from "@/lib/panel";
 import { getBusinessBundle, getBusinesses } from "@/lib/queries";
 import { Pill, SectionTitle, StatCard, Stamp } from "@/components/ui";
-import { db } from "@/db";
-import { aiSettings, packages } from "@/db/schema";
+import { createClient } from "@/lib/supabase/server";
 import { fmtTL } from "@/lib/format";
 import { Check, Lock, Sparkles, Users } from "lucide-react";
 
@@ -16,12 +15,15 @@ export default async function AyarlarPage({
 }) {
   const sp = await searchParams;
   const ctx = await panelContext(sp);
-  const [bundle, allBiz, pkgRows, aiRows] = await Promise.all([
+  const supabase = await createClient();
+  const [bundle, allBiz, pkgResult, aiResult] = await Promise.all([
     getBusinessBundle(ctx.biz),
     getBusinesses(),
-    db.select().from(packages),
-    db.select().from(aiSettings),
+    supabase.from("packages").select("*"),
+    supabase.from("ai_settings").select("*"),
   ]);
+  const pkgRows = pkgResult.data ?? [];
+  const aiRows = aiResult.data ?? [];
 
   return (
     <PanelShell ctx={ctx} active="ayarlar" businesses={allBiz.map((b) => ({ slug: b.slug, name: b.name }))}>
@@ -37,7 +39,7 @@ export default async function AyarlarPage({
       />
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <StatCard label="Paket" value={ctx.biz.planCode} sub="Aylık yenilenir" accent />
+        <StatCard label="Paket" value={ctx.biz.plan_code} sub="Aylık yenilenir" accent />
         <StatCard label="Komisyon oranı" value="%6,0" sub="AFTER_DAMPING tabanı" />
         <StatCard label="Personel" value={String(bundle.staff.length)} sub="Panel erişimi olan" />
         <StatCard label="AI kotası" value="120/ay" sub="İçerik üretim hakkı" />
@@ -84,7 +86,7 @@ export default async function AyarlarPage({
           </div>
           <ul>
             {pkgRows.map((p) => (
-              <li key={p.id} className={`border-b border-murekkep/10 px-5 py-4 last:border-0 ${p.code === ctx.biz.planCode ? "bg-damping-soft/35" : ""}`}>
+              <li key={p.id} className={`border-b border-murekkep/10 px-5 py-4 last:border-0 ${p.code === ctx.biz.plan_code ? "bg-damping-soft/35" : ""}`}>
                 <div className="flex flex-wrap items-baseline justify-between gap-3">
                   <div>
                     <p className="font-display text-[1.06rem] font-bold">{p.name}</p>
@@ -93,10 +95,10 @@ export default async function AyarlarPage({
                     </p>
                   </div>
                   <p className="tabular text-[1.12rem] font-semibold">
-                    {p.priceMonthlyCents === 0 ? "Ücretsiz" : `${fmtTL(p.priceMonthlyCents)} / ay`}
+                    {p.price_monthly_cents === 0 ? "Ücretsiz" : `${fmtTL(p.price_monthly_cents)} / ay`}
                   </p>
                 </div>
-                {p.code === ctx.biz.planCode ? (
+                {p.code === ctx.biz.plan_code ? (
                   <p className="mt-2 text-[0.72rem] font-semibold uppercase tracking-[0.13em] text-damping">
                     Aktif paketiniz
                   </p>

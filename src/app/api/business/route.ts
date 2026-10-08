@@ -1,6 +1,4 @@
-import { eq } from "drizzle-orm";
-import { db } from "@/db";
-import { businesses } from "@/db/schema";
+import { createClient } from "@/lib/supabase/server";
 import { resolveActor, can, deny } from "@/lib/auth";
 import { logAudit } from "@/lib/finance";
 
@@ -15,8 +13,8 @@ const EDITABLE = [
   "instagram",
   "website",
   "address",
-  "subCategory",
-  "logoText",
+  "sub_category",
+  "logo_text",
 ] as const;
 
 export async function POST(req: Request) {
@@ -34,7 +32,16 @@ export async function POST(req: Request) {
     return Response.json({ ok: false, error: "Güncellenecek alan yok." }, { status: 400 });
   }
 
-  const [row] = await db.update(businesses).set(patch).where(eq(businesses.id, businessId)).returning();
+  const supabase = await createClient();
+  const { data: row, error } = await supabase
+    .from("businesses")
+    .update(patch)
+    .eq("id", businessId)
+    .select()
+    .single();
+
+  if (error) return Response.json({ ok: false, error: error.message }, { status: 500 });
+
   await logAudit(actor.email, actor.role, "BUSINESS_UPDATED", "businesses", businessId, { fields: Object.keys(patch) });
   return Response.json({ ok: true, business: row });
 }

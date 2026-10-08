@@ -1,19 +1,5 @@
 import Link from "next/link";
-import { desc, eq } from "drizzle-orm";
-import { db } from "@/db";
-import {
-  adCampaigns,
-  aiContents,
-  aiSettings,
-  auditLogs,
-  businesses,
-  dampingPool,
-  fraudReviews,
-  packages,
-  referrals,
-  transactions,
-  users,
-} from "@/db/schema";
+import { createClient } from "@/lib/supabase/server";
 import { Logo, Pill, SectionTitle, StatCard, Stamp } from "@/components/ui";
 import AdminControls from "@/components/AdminControls";
 import { getPoolLedgerByBusiness, getWallets } from "@/lib/queries";
@@ -26,6 +12,7 @@ export const dynamic = "force-dynamic";
 export default async function AdminPage() {
   await ensureSeed();
 
+  const supabase = await createClient();
   const [
     bizRows,
     pkgRows,
@@ -41,26 +28,26 @@ export default async function AdminPage() {
     userRows,
     pool,
   ] = await Promise.all([
-    db.select().from(businesses).orderBy(desc(businesses.rating)),
-    db.select().from(packages),
-    db.select().from(transactions).orderBy(desc(transactions.createdAt)).limit(25),
+    supabase.from("businesses").select("*").order("rating", { ascending: false }),
+    supabase.from("packages").select("*"),
+    supabase.from("store_transactions").select("*").order("created_at", { ascending: false }).limit(25),
     getPoolLedgerByBusiness(),
     getWallets(),
-    db.select().from(referrals),
-    db.select().from(fraudReviews).orderBy(desc(fraudReviews.createdAt)),
-    db.select().from(adCampaigns),
-    db.select().from(auditLogs).orderBy(desc(auditLogs.createdAt)).limit(12),
-    db.select().from(aiSettings),
-    db.select().from(aiContents).orderBy(desc(aiContents.createdAt)).limit(8),
-    db.select().from(users),
-    db.select().from(dampingPool),
+    supabase.from("referrals").select("*"),
+    supabase.from("fraud_reviews").select("*").order("created_at", { ascending: false }),
+    supabase.from("ad_campaigns").select("*"),
+    supabase.from("audit_logs").select("*").order("created_at", { ascending: false }).limit(12),
+    supabase.from("ai_settings").select("*"),
+    supabase.from("ai_contents").select("*").order("created_at", { ascending: false }).limit(8),
+    supabase.from("users").select("*"),
+    getPool(),
   ]);
 
-  const completed = txRows.filter((t) => t.status === "COMPLETED");
-  const gross = completed.reduce((s, t) => s + t.grossAmountCents, 0);
-  const commission = completed.reduce((s, t) => s + t.commissionCents, 0);
-  const dampingUsed = completed.reduce((s, t) => s + t.dampingUsedCents, 0);
-  const poolBalance = pool[0]?.balanceCents ?? 0;
+  const completed = (txRows || []).filter((t) => t.status === "COMPLETED");
+  const gross = completed.reduce((s, t) => s + t.gross_amount_cents, 0);
+  const commission = completed.reduce((s, t) => s + t.commission_cents, 0);
+  const dampingUsed = completed.reduce((s, t) => s + t.damping_used_cents, 0);
+  const poolBalance = pool?.balance_cents ?? 0;
 
   return (
     <div className="min-h-screen">

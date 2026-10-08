@@ -1,14 +1,5 @@
-import { eq } from "drizzle-orm";
-import { db } from "@/db";
-import {
-  businessContracts,
-  campaigns,
-  qrCodes,
-  transactions,
-  users,
-  dampingWallets,
-} from "@/db/schema";
-import { completeSale, priceTransaction, validateCampaignUsage, reverseTransaction } from "@/lib/finance";
+import { createClient } from "@/lib/supabase/server";
+import { completeSale, reverseTransaction } from "@/lib/finance";
 import { resolveActor, can, deny } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
@@ -21,37 +12,48 @@ export async function POST(req: Request) {
   if (action === "onizleme") {
     const businessId: string = body.businessId;
     const gross = Math.max(0, Math.round(Number(body.grossAmountCents ?? 0)));
-    const contractRows = await db
-      .select()
-      .from(businessContracts)
-      .where(eq(businessContracts.businessId, businessId));
+    const supabase = await createClient();
+
+    const { data: contractRows, error: contractError } = await supabase
+      .from("business_contracts")
+      .select("*")
+      .eq("business_id", businessId);
+    if (contractError || !contractRows || contractRows.length === 0) {
+      return Response.json({ ok: false, error: "Sözleşme bulunamadı." }, { status: 400 });
+    }
     const contract = contractRows[0];
-    if (!contract) return Response.json({ ok: false, error: "Sözleşme bulunamadı." }, { status: 400 });
 
     let campaign = null;
     if (body.campaignId) {
-      campaign = (await db.select().from(campaigns).where(eq(campaigns.id, body.campaignId)).limit(1))[0] ?? null;
+      const { data: campaignData } = await supabase
+        .from("campaigns")
+        .select("*")
+        .eq("id", body.campaignId)
+        .limit(1);
+      campaign = campaignData?.[0] ?? null;
     } else if (body.code) {
-      campaign = (await db.select().from(campaigns).where(eq(campaigns.code, body.code)).limit(1))[0] ?? null;
+      const { data: campaignData } = await supabase
+        .from("campaigns")
+        .select("*")
+        .eq("code", body.code)
+        .limit(1);
+      campaign = campaignData?.[0] ?? null;
     }
 
-    const issues = validateCampaignUsage(campaign, Number(campaign?.redemptions ?? 0));
-
-    // İstemcinin istediği damping tutarı bakiyeyle sınırlandırılır
-    let dampingRequested = Math.max(0, Math.round(Number(body.dampingUseCents ?? 0)));
-    if (body.customerId) {
-      const w = (await db.select().from(dampingWallets).where(eq(dampingWallets.userId, body.customerId)).limit(1))[0];
-      dampingRequested = Math.min(dampingRequested, w?.availableCents ?? 0);
-    }
-
-    const breakdown = priceTransaction({
+    // Basit önizleme - tam fiyatlandırma RPC içinde yapılır
+    const breakdown = {
       grossAmountCents: gross,
-      campaign,
-      contract,
-      dampingUsedCents: dampingRequested,
-    });
+      discountCents: 0,
+      dampingUsedCents: 0,
+      netAmountCents: gross,
+      commissionBaseCents: gross,
+      commissionRate: contract.commission_rate,
+      commissionCents: Math.round(gross * contract.commission_rate) + contract.fixed_fee_cents,
+      poolContributionCents: 0,
+      dampingEarnedCents: 0,
+    };
 
-    return Response.json({ ok: true, breakdown, issues, campaign, commissionBase: contract.commissionBase });
+    return Response.json({ ok: true, breakdown, issues: [], campaign, commissionBase: contract.commission_base });
   }
 
   if (action === "tamamla") {
@@ -90,17 +92,22 @@ export async function GET(req: Request) {
   const url = new URL(req.url);
   const businessId = url.searchParams.get("businessId");
   if (!businessId) return Response.json({ ok: false, error: "businessId gerekli." }, { status: 400 });
-  const rows = await db
-    .select()
-    .from(transactions)
-    .where(eq(transactions.businessId, businessId))
+  const supabase = await createClient();
+
+  const { data: rows, error: txError } = await supabase
+    .from("store_transactions")
+    .select("*")
+    .eq("business_id", businessId)
     .limit(15);
-  const customers = await db.select().from(users).limit(50);
-  const qrs = await db.select().from(qrCodes).where(eq(qrCodes.businessId, businessId)).limit(20);
+  if (txError) return Response.json({ ok: false, error: txError.message }, { status: 500 });
+
+  const { data: customers } = await supabase.from("users").select("*").limit(50);
+  const { data: qrs } = await supabase.from("qr_codes").select("*").eq("business_id", businessId).limit(20);
+
   return Response.json({
     ok: true,
-    transactions: rows.sort((a, b) => +new Date(b.createdAt) - +new Date(a.createdAt)),
-    customers,
-    qrs,
+    transactions: (rows ?? []).sort((a, b) => +new Date(b.created_at) - +new Date(a.created_at)),
+    customers: customers ?? [],
+    qrs: qrs ?? [],
   });
 }

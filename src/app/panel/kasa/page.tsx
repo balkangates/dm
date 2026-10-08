@@ -3,9 +3,7 @@ import { panelContext } from "@/lib/panel";
 import { getBusinessBundle, getBusinesses, getLatestTransactions } from "@/lib/queries";
 import { Pill, SectionTitle } from "@/components/ui";
 import KasaClient from "@/components/KasaClient";
-import { db } from "@/db";
-import { qrCodes } from "@/db/schema";
-import { eq } from "drizzle-orm";
+import { createClient } from "@/lib/supabase/server";
 import { fmtDateTime, fmtTL } from "@/lib/format";
 import Link from "next/link";
 
@@ -18,12 +16,14 @@ export default async function KasaPage({
 }) {
   const sp = await searchParams;
   const ctx = await panelContext(sp);
-  const [bundle, allBiz, qrs, recent] = await Promise.all([
+  const supabase = await createClient();
+  const [bundle, allBiz, qrResult, recent] = await Promise.all([
     getBusinessBundle(ctx.biz),
     getBusinesses(),
-    db.select().from(qrCodes).where(eq(qrCodes.businessId, ctx.biz.id)),
+    supabase.from("qr_codes").select("*").eq("business_id", ctx.biz.id),
     getLatestTransactions(ctx.biz.id, 6),
   ]);
+  const qrs = qrResult.data ?? [];
 
   return (
     <PanelShell ctx={ctx} active="kasa" businesses={allBiz.map((b) => ({ slug: b.slug, name: b.name }))}>
@@ -45,14 +45,14 @@ export default async function KasaPage({
         district={ctx.biz.district}
         actorEmail={ctx.actorEmail}
         role={ctx.role}
-        qrCodes={qrs.map((q) => ({ code: q.code, status: q.status, customerId: q.customerId }))}
+        qrCodes={qrs.map((q) => ({ code: q.code, status: q.status, customerId: q.customer_id }))}
         campaigns={bundle.campaigns.map((c) => ({
           id: c.id,
           code: c.code,
           title: c.title,
-          discountPercent: c.discountPercent,
+          discountPercent: c.discount_percent,
         }))}
-        contractBase={bundle.contract?.commissionBase ?? "AFTER_DAMPING"}
+        contractBase={bundle.contract?.commission_base ?? "AFTER_DAMPING"}
       />
 
       {/* Kasiyerin kendi işlemleri */}
@@ -88,13 +88,13 @@ export default async function KasaPage({
             <tbody>
               {recent.map((t) => (
                 <tr key={t.id} className="border-b border-murekkep/10 last:border-0 odd:bg-kagit/40">
-                  <td className="tabular px-4 py-2.5 font-semibold">{t.receiptNo}</td>
-                  <td className="px-4 py-2.5 text-sicak-gri">{fmtDateTime(t.createdAt)}</td>
-                  <td className="tabular px-4 py-2.5">{fmtTL(t.grossAmountCents)}</td>
-                  <td className="tabular px-4 py-2.5 text-damping">-{fmtTL(t.discountCents)}</td>
-                  <td className="tabular px-4 py-2.5">-{fmtTL(t.dampingUsedCents)}</td>
-                  <td className="tabular px-4 py-2.5 font-semibold">{fmtTL(t.netAmountCents)}</td>
-                  <td className="tabular px-4 py-2.5 text-sicak-gri">{fmtTL(t.commissionCents)}</td>
+                  <td className="tabular px-4 py-2.5 font-semibold">{t.receipt_no}</td>
+                  <td className="px-4 py-2.5 text-sicak-gri">{fmtDateTime(t.created_at)}</td>
+                  <td className="tabular px-4 py-2.5">{fmtTL(t.gross_amount_cents)}</td>
+                  <td className="tabular px-4 py-2.5 text-damping">-{fmtTL(t.discount_cents)}</td>
+                  <td className="tabular px-4 py-2.5">-{fmtTL(t.damping_used_cents)}</td>
+                  <td className="tabular px-4 py-2.5 font-semibold">{fmtTL(t.net_amount_cents)}</td>
+                  <td className="tabular px-4 py-2.5 text-sicak-gri">{fmtTL(t.commission_cents)}</td>
                 </tr>
               ))}
             </tbody>

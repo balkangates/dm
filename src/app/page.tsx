@@ -1,8 +1,6 @@
 import Link from "next/link";
 import { ArrowRight, QrCode, Sparkles, ShieldCheck, TrendingUp, Gift, MapPin } from "lucide-react";
-import { db } from "@/db";
-import { businessHours, businesses, campaigns, products } from "@/db/schema";
-import { desc, eq } from "drizzle-orm";
+import { createClient } from "@/lib/supabase/server";
 import { Logo, SectionTitle, Stamp, StatCard, Btn, Pill, Rating } from "@/components/ui";
 import DiscoveryBoard, { type DiscoveryItem } from "@/components/DiscoveryBoard";
 import { ensureSeed } from "@/lib/seed";
@@ -26,47 +24,48 @@ const TICKER = [
 export default async function HomePage() {
   await ensureSeed();
 
+  const supabase = await createClient();
   const [bizRows, hourRows, campRows, prodRows] = await Promise.all([
-    db.select().from(businesses).orderBy(desc(businesses.featured), desc(businesses.rating)),
-    db.select().from(businessHours),
-    db.select().from(campaigns),
-    db.select().from(products),
+    supabase.from("businesses").select("*").order("featured", { ascending: false }).order("rating", { ascending: false }),
+    supabase.from("business_hours").select("*"),
+    supabase.from("campaigns").select("*"),
+    supabase.from("products").select("*"),
   ]);
 
   const now = new Date();
-  const items: DiscoveryItem[] = bizRows.map((b) => {
-    const hours = hourRows.filter((h) => h.businessId === b.id);
-    const camps = campRows.filter((c) => c.businessId === b.id && c.status === "PUBLISHED");
-    const prods = prodRows.filter((p) => p.businessId === b.id && p.discountPriceCents != null);
+  const items: DiscoveryItem[] = (bizRows.data || []).map((b) => {
+    const hours = (hourRows.data || []).filter((h) => h.business_id === b.id);
+    const camps = (campRows.data || []).filter((c) => c.business_id === b.id && c.status === "PUBLISHED");
+    const prods = (prodRows.data || []).filter((p) => p.business_id === b.id && p.discount_price_cents != null);
     const p = prods[0] ?? null;
     const percent = p
-      ? Math.round((1 - (p.discountPriceCents ?? 0) / p.priceCents) * 100)
-      : camps[0]?.discountPercent ?? 0;
+      ? Math.round((1 - (p.discount_price_cents ?? 0) / p.price_cents) * 100)
+      : camps[0]?.discount_percent ?? 0;
     return {
       slug: b.slug,
       name: b.name,
       category: b.category,
-      sectorKey: b.sectorKey,
+      sectorKey: b.sector_key,
       district: b.district,
       city: b.city,
       rating: b.rating,
-      reviewCount: b.reviewCount,
-      planCode: b.planCode,
+      reviewCount: b.review_count,
+      planCode: b.plan_code,
       featured: b.featured,
-      coverImage: b.coverImage ?? "/images/magaza-ic.jpg",
+      coverImage: b.cover_image ?? "/images/magaza-ic.jpg",
       description: b.description ?? "",
       isOpen: isOpenNow(hours, now),
-      createdAt: b.createdAt.toISOString(),
+      createdAt: b.created_at.toISOString(),
       offer:
         p && camps[0]
           ? {
               title: camps[0].title,
               percent,
               product: p.name,
-              normalCents: p.priceCents,
-              dampingCents: p.discountPriceCents ?? p.priceCents,
-              timeStart: camps[0].timeStart,
-              timeEnd: camps[0].timeEnd,
+              normalCents: p.price_cents,
+              dampingCents: p.discount_price_cents ?? p.price_cents,
+              timeStart: camps[0].time_start,
+              timeEnd: camps[0].time_end,
               code: camps[0].code,
             }
           : null,

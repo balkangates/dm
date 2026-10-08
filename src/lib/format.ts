@@ -63,18 +63,18 @@ export const DAY_NAMES = [
 ];
 
 export type HourRow = {
-  dayOfWeek: number;
-  opensAt: string;
-  closesAt: string;
+  day_of_week: number;
+  opens_at: string;
+  closes_at: string;
   closed: boolean;
 };
 
 /** Şu an işletme açık mı? */
 export function isOpenNow(hours: HourRow[], now = new Date()): boolean {
-  const row = hours.find((h) => h.dayOfWeek === now.getDay());
+  const row = hours.find((h) => h.day_of_week === now.getDay());
   if (!row || row.closed) return false;
-  const [oh, om] = row.opensAt.split(":").map(Number);
-  const [ch, cm] = row.closesAt.split(":").map(Number);
+  const [oh, om] = row.opens_at.split(":").map(Number);
+  const [ch, cm] = row.closes_at.split(":").map(Number);
   const minutes = now.getHours() * 60 + now.getMinutes();
   const open = oh * 60 + om;
   let close = ch * 60 + cm;
@@ -85,6 +85,15 @@ export function isOpenNow(hours: HourRow[], now = new Date()): boolean {
 
 export function openLabel(hours: HourRow[], now = new Date()): string {
   return isOpenNow(hours, now) ? "Açık" : "Kapalı";
+}
+
+export function convertHourRow(row: any): HourRow {
+  return {
+    day_of_week: row.day_of_week,
+    opens_at: row.opens_at,
+    closes_at: row.closes_at,
+    closed: row.closed,
+  };
 }
 
 export function slugify(input: string): string {

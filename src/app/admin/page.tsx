@@ -2,7 +2,7 @@ import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { Logo, Pill, SectionTitle, StatCard, Stamp } from "@/components/ui";
 import AdminControls from "@/components/AdminControls";
-import { getPoolLedgerByBusiness, getWallets } from "@/lib/queries";
+import { getPool, getPoolLedgerByBusiness, getWallets } from "@/lib/queries";
 import { ensureSeed } from "@/lib/seed";
 import { fmtDate, fmtDateTime, fmtPercent, fmtTL } from "@/lib/format";
 import { ShieldAlert, Database, ArrowLeft } from "lucide-react";
@@ -14,18 +14,18 @@ export default async function AdminPage() {
 
   const supabase = await createClient();
   const [
-    bizRows,
-    pkgRows,
-    txRows,
+    bizRowsRes,
+    pkgRowsRes,
+    txRowsRes,
     poolRows,
     walletRows,
-    refRows,
-    fraudRows,
-    adRows,
-    auditRows,
-    aiRows,
-    contentRows,
-    userRows,
+    refRowsRes,
+    fraudRowsRes,
+    adRowsRes,
+    auditRowsRes,
+    aiRowsRes,
+    contentRowsRes,
+    userRowsRes,
     pool,
   ] = await Promise.all([
     supabase.from("businesses").select("*").order("rating", { ascending: false }),
@@ -42,6 +42,17 @@ export default async function AdminPage() {
     supabase.from("users").select("*"),
     getPool(),
   ]);
+
+  const bizRows = bizRowsRes.data ?? [];
+  const pkgRows = pkgRowsRes.data ?? [];
+  const txRows = txRowsRes.data ?? [];
+  const refRows = refRowsRes.data ?? [];
+  const fraudRows = fraudRowsRes.data ?? [];
+  const adRows = adRowsRes.data ?? [];
+  const auditRows = auditRowsRes.data ?? [];
+  const aiRows = aiRowsRes.data ?? [];
+  const contentRows = contentRowsRes.data ?? [];
+  const userRows = userRowsRes.data ?? [];
 
   const completed = (txRows || []).filter((t) => t.status === "COMPLETED");
   const gross = completed.reduce((s, t) => s + t.gross_amount_cents, 0);

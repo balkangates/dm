@@ -107,107 +107,15 @@ export async function logAudit(
     meta,
   });
 }
-            refId: transactionId,
-            description: `İade: ${(row.receipt_no as string)} kazancı geri alındı`,
-          });
-        }
-        if (dampingUsed > 0) {
-          await tx.insert(walletLedger).values({
-            walletId: wallet.id,
-            userId: row.customer_id as string,
-            entryType: "REVERSE",
-            status: "AVAILABLE",
-            amountCents: dampingUsed,
-            refType: "TRANSACTION",
-            refId: transactionId,
-            description: `İade: ${(row.receipt_no as string)} harcaması iade edildi`,
-          });
-        }
-        const available = wallet.availableCents + dampingUsed - dampingEarned;
-        if (available < 0) throw new Error("NEGATIVE_BALANCE");
-        await tx
-          .update(dampingWallets)
-          .set({
-            availableCents: available,
-            lifetimeEarnedCents: wallet.lifetimeEarnedCents - dampingEarned,
-            lifetimeSpentCents: wallet.lifetimeSpentCents - dampingUsed,
-            updatedAt: new Date(),
-          })
-          .where(eq(dampingWallets.id, wallet.id));
-      }
-    }
-
-    // Havuz düzeltmesi: katkı geri alınır, havuzdan karşılanan ödül iade edilir.
-    // REVERSE satırları kendi işaretini taşır (+/-), toplam her zaman ledger ile aynıdır.
-    const poolDelta = -poolContribution + dampingEarned;
-    if (poolContribution !== 0) {
-      await tx.insert(poolLedger).values({
-        businessId: row.business_id as string,
-        direction: "REVERSE",
-        amountCents: -poolContribution,
-        refType: "TRANSACTION",
-        refId: transactionId,
-        description: `İade: ${(row.receipt_no as string)} havuz katkısı geri alındı`,
-      });
-    }
-    if (dampingEarned !== 0) {
-      await tx.insert(poolLedger).values({
-        businessId: row.business_id as string,
-        direction: "REVERSE",
-        amountCents: dampingEarned,
-        refType: "TRANSACTION",
-        refId: transactionId,
-        description: `İade: ${(row.receipt_no as string)} havuz ödülü iade edildi`,
-      });
-    }
-    if (poolDelta !== 0) {
-      await tx
-        .update(dampingPool)
-        .set({
-          balanceCents: sql`${dampingPool.balanceCents} + ${poolDelta}`,
-          updatedAt: new Date(),
-        })
-        .where(eq(dampingPool.key, "GLOBAL"));
-    }
-
-    await tx
-      .update(referralRewards)
-      .set({ status: "CANCELLED" })
-      .where(eq(referralRewards.transactionId, transactionId));
-
-    if (row.qr_code_id) {
-      await tx.update(qrCodes).set({ status: "ACTIVE", redeemedAt: null }).where(eq(qrCodes.id, row.qr_code_id as string));
-    }
-
-    await tx.insert(auditLogs).values({
-      actor,
-      role: "MANAGER",
-      action: "TRANSACTION_REVERSED",
-      entityType: "store_transactions",
-      entityId: transactionId,
-      meta: { reason, reversalId: rev.id },
-    });
-
-    return { ok: true, message: "İade kaydı oluşturuldu.", reversalId: rev.id };
-  });
-}
-
-export async function logAudit(
-  actor: string,
-  role: string,
-  action: string,
-  entityType: string,
-  entityId: string | null,
-  meta: Record<string, unknown> = {}
-) {
-  await db.insert(auditLogs).values({ actor, role, action, entityType, entityId, meta });
-}
 
 export async function latestTransactions(businessId: string, limit = 8) {
-  return await db
-    .select()
-    .from(transactions)
-    .where(eq(transactions.businessId, businessId))
-    .orderBy(desc(transactions.createdAt))
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("store_transactions")
+    .select("*")
+    .eq("business_id", businessId)
+    .order("created_at", { ascending: false })
     .limit(limit);
+  if (error) throw error;
+  return data ?? [];
 }

@@ -1,3 +1,4 @@
+import { isSupabaseConfigured } from "@/lib/supabase/env";
 import { createHmac, randomBytes, scryptSync, timingSafeEqual } from "node:crypto";
 import { cookies } from "next/headers";
 import { eq } from "drizzle-orm";
@@ -77,6 +78,8 @@ export type SessionUser = typeof users.$inferSelect;
 
 /** Oturum doğrulaması her zaman sunucuda yapılır; rol istemciden gelmez. */
 export async function currentUser(): Promise<SessionUser | null> {
+  // Supabase modunda eski özel oturum GEÇERSİZDİR (sabit yedek anahtarla çerez üretilememesi için).
+  if (isSupabaseConfigured()) return null;
   const store = await cookies();
   const token = store.get(SESSION_COOKIE)?.value;
   if (!token) return null;

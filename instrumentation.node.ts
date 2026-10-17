@@ -3,7 +3,11 @@
  * Eski demo verisini (Drizzle/pg katmanı) hazırlar. DATABASE_URL yoksa — yani uygulama yalnızca
  * Supabase ile çalışıyorsa — hiçbir şey yapmaz ve sunucunun açılmasını ENGELLEMEZ.
  */
+import { isSupabaseConfigured } from "@/lib/supabase/env";
+
 export async function registerNode() {
+  // Supabase modunda demo verisi (kaynakta duran demo şifreli hesaplar) ASLA otomatik yüklenmez.
+  if (isSupabaseConfigured()) return;
   if (!process.env.DATABASE_URL) return;
   try {
     const { ensureSeeded } = await import("@/lib/queries");

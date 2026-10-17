@@ -1,4 +1,7 @@
 import { redirect } from "next/navigation";
+import { isSupabaseConfigured } from "@/lib/supabase/env";
+import { requirePageAccess } from "@/lib/auth/guard";
+import { SupabaseAccountNotice } from "@/components/SupabaseAccountNotice";
 import { currentUser } from "@/lib/session";
 import { ensureSeeded, getBusinessData, listBusinesses, listVideos } from "@/lib/queries";
 import { getLocale } from "@/lib/locale";
@@ -13,6 +16,10 @@ export default async function PanelPage({
 }: {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
+  if (isSupabaseConfigured()) {
+    const ctx = await requirePageAccess("/panel");
+    return <SupabaseAccountNotice ctx={ctx} title="İşletme Paneli" />;
+  }
   await ensureSeeded();
   const user = await currentUser();
   if (!user) redirect("/giris?next=/panel");

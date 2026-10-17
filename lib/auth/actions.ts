@@ -78,7 +78,7 @@ export async function signUpAction(input: {
   const bad = validateName(name) ?? validateEmail(email) ?? validatePasswordForSignUp(password);
   if (bad) return { ok: false, error: bad };
 
-  // Rol GÖNDERİLMEZ: handle_new_user trigger'ı rolü her zaman CUSTOMER yapar (kendini yükseltme yok).
+  // Rol GÖNDERİLMEZ: handle_new_user trigger'ı rolü her zaman customer yapar (kendini yükseltme yok).
   const data = {
     name,
     referral_code: normalizeReferral(input?.referralCode),

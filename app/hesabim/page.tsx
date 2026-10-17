@@ -1,4 +1,7 @@
 import { redirect } from "next/navigation";
+import { isSupabaseConfigured } from "@/lib/supabase/env";
+import { requirePageAccess } from "@/lib/auth/guard";
+import { SupabaseAccountNotice } from "@/components/SupabaseAccountNotice";
 import { currentUser } from "@/lib/session";
 import { getCustomerData, listCampaignCards, listOffers, ensureSeeded } from "@/lib/queries";
 import { getLocale } from "@/lib/locale";
@@ -13,6 +16,11 @@ export default async function AccountPage({
 }: {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
+  if (isSupabaseConfigured()) {
+    // Supabase modu: sunucuda rol doğrulaması (middleware ile aynı kural). Veri katmanı henüz bağlı değil.
+    const ctx = await requirePageAccess("/hesabim");
+    return <SupabaseAccountNotice ctx={ctx} title="Hesabım" />;
+  }
   await ensureSeeded();
   const user = await currentUser();
   if (!user) redirect("/giris?next=/hesabim");

@@ -1,0 +1,212 @@
+@import "tailwindcss";
+
+@theme {
+  /* ---------------- KAĞIT / MÜREKKEP YÜZEYLERİ ---------------- */
+  --color-surface: #fbf7ef;
+  --color-canvas: #f4ede1;
+  --color-canvas-2: #eae0ce;
+  --color-line: #d9ccb4;
+  --color-line-soft: #e7ddcb;
+
+  /* ---------------- MÜREKKEP ---------------- */
+  --color-ink: #12212f;
+  --color-ink-700: #24384c;
+  --color-ink-500: #46596d;
+  --color-muted: #7a7163;
+  --color-muted-2: #a2988a;
+
+  /* ---------------- DAMPING KIRMIZISI (aksan) ---------------- */
+  --color-accent: #d6362b;
+  --color-accent-600: #b3271e;
+  --color-accent-700: #8f1d16;
+  --color-accent-soft: #f6e0dc;
+
+  /* ---------------- ANLAM RENKLERİ ---------------- */
+  --color-positive: #1f6f4a;
+  --color-positive-soft: #dcebe2;
+  --color-warning: #9a6b07;
+  --color-warning-soft: #f6e9cc;
+  --color-info: #2c4a7c;
+  --color-info-soft: #dde5f2;
+  --color-danger: #b4231a;
+  --color-danger-soft: #f7dfdc;
+  --color-amber: #e8a317;
+
+  --font-display: "Bricolage Grotesque", "Arial Black", sans-serif;
+  --font-sans: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, monospace;
+
+  --radius-card: 4px;
+  --radius-field: 3px;
+
+  --shadow-card: 4px 4px 0 0 rgba(18, 33, 47, 0.07);
+  --shadow-pop: 7px 7px 0 0 rgba(18, 33, 47, 0.85);
+}
+
+html {
+  scroll-behavior: smooth;
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  background-color: var(--color-canvas);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  overflow-x: hidden;
+  background-image:
+    radial-gradient(circle at 12% 18%, rgba(214, 54, 43, 0.045), transparent 42%),
+    radial-gradient(circle at 88% 72%, rgba(18, 33, 47, 0.05), transparent 40%),
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3'/%3E%3C/filter%3E%3Crect width='140' height='140' filter='url(%23n)' opacity='0.3'/%3E%3C/svg%3E");
+}
+
+h1, h2, h3, h4, .display {
+  font-family: var(--font-display);
+  letter-spacing: -0.025em;
+}
+
+.tabular {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum";
+}
+
+::selection { background: var(--color-accent); color: #fbf7ef; }
+
+:focus-visible {
+  outline: 3px solid var(--color-accent);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+/* ---------------- evrak dokusu katmanları ---------------- */
+.grain::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.3;
+  mix-blend-mode: overlay;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='3'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)' opacity='0.5'/%3E%3C/svg%3E");
+}
+
+.hero-grid {
+  background-image:
+    linear-gradient(to right, rgba(251, 247, 239, 0.07) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(251, 247, 239, 0.07) 1px, transparent 1px);
+  background-size: 56px 56px;
+  mask-image: radial-gradient(ellipse 90% 70% at 28% 18%, #000 28%, transparent 78%);
+}
+
+.dot-map {
+  background-image: radial-gradient(rgba(18, 33, 47, 0.16) 1px, transparent 1px);
+  background-size: 10px 10px;
+}
+
+/* kesikli evrak çizgisi */
+.dashed-rule { border-top: 1.5px dashed rgba(18, 33, 47, 0.32); }
+
+/* termal fiş perfore kenarı */
+.perforated-top {
+  background-image: radial-gradient(circle at 6px 0, transparent 5px, var(--color-surface) 5.5px);
+  background-size: 12px 12px;
+}
+.perforated-bottom {
+  background-image: radial-gradient(circle at 6px 12px, transparent 5px, var(--color-surface) 5.5px);
+  background-size: 12px 12px;
+}
+
+/* mühür */
+.stamp {
+  border: 2.5px solid var(--color-accent);
+  color: var(--color-accent);
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  transform: rotate(-6deg);
+  box-shadow: inset 0 0 0 1px rgba(214, 54, 43, 0.35);
+}
+
+/* ---------------- hareket ---------------- */
+@keyframes dv-rise { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: none; } }
+@keyframes dv-line { from { opacity: 0; transform: translateY(105%); } to { opacity: 1; transform: none; } }
+@keyframes dv-scan { 0% { transform: translateY(-8%); opacity: 0; } 12%, 88% { opacity: 1; } 100% { transform: translateY(108%); opacity: 0; } }
+@keyframes dv-marquee { from { transform: translateX(0); } to { transform: translateX(-50%); } }
+@keyframes dv-shimmer { from { background-position: -420px 0; } to { background-position: 420px 0; } }
+@keyframes dv-toast { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+@keyframes dv-spin { to { transform: rotate(360deg); } }
+@keyframes dv-pulse-ring {
+  0% { box-shadow: 0 0 0 0 rgba(214, 54, 43, 0.4); }
+  70% { box-shadow: 0 0 0 12px rgba(214, 54, 43, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(214, 54, 43, 0); }
+}
+@keyframes dv-stamp {
+  0% { opacity: 0; transform: rotate(-6deg) scale(1.4); }
+  60% { opacity: 1; transform: rotate(-6deg) scale(0.96); }
+  100% { opacity: 1; transform: rotate(-6deg) scale(1); }
+}
+@keyframes dv-grow { from { transform: scaleY(0.02); opacity: 0.4; } to { transform: scaleY(1); opacity: 1; } }
+@keyframes dv-draw { from { stroke-dashoffset: var(--len, 200); } to { stroke-dashoffset: 0; } }
+@keyframes dv-flow { to { stroke-dashoffset: -24; } }
+
+.reveal { opacity: 0; transform: translateY(18px); transition: opacity 0.62s cubic-bezier(0.22, 0.72, 0.24, 1), transform 0.62s cubic-bezier(0.22, 0.72, 0.24, 1); }
+.reveal.is-in { opacity: 1; transform: none; }
+
+.line-mask { display: block; overflow: hidden; }
+.line-mask > span { display: block; animation: dv-line 0.85s cubic-bezier(0.22, 0.72, 0.24, 1) both; }
+
+.anim-rise { animation: dv-rise 0.5s cubic-bezier(0.22, 0.72, 0.24, 1) both; }
+.anim-toast { animation: dv-toast 0.28s cubic-bezier(0.22, 0.72, 0.24, 1) both; }
+.anim-spin { animation: dv-spin 0.9s linear infinite; }
+.anim-marquee { animation: dv-marquee 44s linear infinite; }
+.anim-stamp { animation: dv-stamp 0.5s cubic-bezier(0.2, 0.8, 0.3, 1) both; }
+.scanline { animation: dv-scan 2.6s cubic-bezier(0.45, 0, 0.55, 1) infinite; }
+.pulse-ring { animation: dv-pulse-ring 2.2s ease-out infinite; }
+.bar-grow { transform-origin: bottom; animation: dv-grow 0.75s cubic-bezier(0.22, 0.72, 0.24, 1) both; }
+
+/* akan bağlantı çizgisi (işlem akışı konnektörleri) */
+.flow-line { stroke-dasharray: 6 6; animation: dv-flow 1.1s linear infinite; }
+.draw-line { animation: dv-draw 0.9s cubic-bezier(0.22, 0.72, 0.24, 1) both; }
+
+.skeleton {
+  background: linear-gradient(90deg, #eae0ce 0%, #f4ede1 45%, #eae0ce 90%);
+  background-size: 420px 100%;
+  animation: dv-shimmer 1.5s linear infinite;
+}
+
+/* ---------------- bileşen kabukları ---------------- */
+.card {
+  background: var(--color-surface);
+  border: 2px solid var(--color-line);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow-card);
+}
+
+.hover-lift { transition: transform 0.22s cubic-bezier(0.22, 0.72, 0.24, 1), box-shadow 0.22s ease, border-color 0.22s ease; }
+.hover-lift:hover {
+  transform: translate(-2px, -2px);
+  box-shadow: 6px 6px 0 0 rgba(214, 54, 43, 0.22);
+  border-color: var(--color-ink-500);
+}
+
+.link-sweep {
+  background-image: linear-gradient(currentColor, currentColor);
+  background-size: 0% 1.5px;
+  background-repeat: no-repeat;
+  background-position: 0 100%;
+  transition: background-size 0.3s cubic-bezier(0.22, 0.72, 0.24, 1);
+}
+.link-sweep:hover { background-size: 100% 1.5px; }
+
+.thin-scroll::-webkit-scrollbar { width: 8px; height: 8px; }
+.thin-scroll::-webkit-scrollbar-thumb { background: #cbbda3; border-radius: 999px; }
+.thin-scroll::-webkit-scrollbar-track { background: transparent; }
+.no-scrollbar::-webkit-scrollbar { display: none; }
+.no-scrollbar { scrollbar-width: none; }
+
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  .reveal { opacity: 1 !important; transform: none !important; transition: none !important; }
+  .line-mask > span, .anim-rise, .anim-toast, .anim-marquee, .anim-stamp,
+  .scanline, .pulse-ring, .bar-grow, .skeleton, .flow-line, .draw-line { animation: none !important; }
+  .hover-lift:hover { transform: none; }
+}

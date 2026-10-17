@@ -1,18 +1,25 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { currentUser } from "@/lib/session";
+import { isSupabaseConfigured } from "@/lib/supabase/env";
+import { safeNextPath } from "@/lib/auth/validation";
 import { getLocale } from "@/lib/locale";
 import { PublicShell, type SessionLite } from "@/components/Shell";
 import { AuthCard } from "@/components/AuthCard";
-import { ensureSeeded } from "@/lib/queries";
 
 export const dynamic = "force-dynamic";
 export const metadata = { title: "Giriş yap" };
 
 export default async function LoginPage({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
-  await ensureSeeded();
-  const user = await currentUser();
-  if (user) redirect(user.role === "ADMIN" ? "/admin" : user.role === "BUSINESS" ? "/panel" : "/hesabim");
+  const supabaseOn = isSupabaseConfigured();
+  // Eski (özel oturumlu) yol yalnızca Supabase yapılandırılmamışken çalışır; modüller tembel yüklenir.
+  // Supabase modunda burada yönlendirme YOK: rol/rota yönlendirmesi FAZ 4'te middleware'e bağlanacak.
+  if (!supabaseOn) {
+    const { ensureSeeded } = await import("@/lib/queries");
+    const { currentUser } = await import("@/lib/session");
+    await ensureSeeded();
+    const user = await currentUser();
+    if (user) redirect(user.role === "ADMIN" ? "/admin" : user.role === "BUSINESS" ? "/panel" : "/hesabim");
+  }
   const sp = await searchParams;
   const locale = await getLocale();
   const session: SessionLite = null;
@@ -37,7 +44,7 @@ export default async function LoginPage({ searchParams }: { searchParams: Promis
             Hesabın yok mu? <Link href="/kayit" className="font-semibold text-accent hover:underline">Kayıt ol</Link>
           </p>
         </div>
-        <AuthCard mode="login" next={typeof sp.next === "string" ? sp.next : undefined} lang={locale.lang} />
+        <AuthCard mode="login" next={safeNextPath(sp.next) ?? undefined} lang={locale.lang} supabase={supabaseOn} notice={sp.hata === "dogrulama" ? "E-posta doğrulama bağlantısı geçersiz veya süresi dolmuş. Tekrar giriş yapmayı dene." : undefined} />
       </div>
     </PublicShell>
   );

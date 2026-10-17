@@ -1,19 +1,23 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { currentUser } from "@/lib/session";
+import { isSupabaseConfigured } from "@/lib/supabase/env";
 import { getLocale } from "@/lib/locale";
 import { PublicShell } from "@/components/Shell";
 import { AuthCard } from "@/components/AuthCard";
 import { Badge, Card, Icon } from "@/components/ds";
-import { ensureSeeded } from "@/lib/queries";
 
 export const dynamic = "force-dynamic";
 export const metadata = { title: "Kayıt ol" };
 
 export default async function RegisterPage({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
-  await ensureSeeded();
-  const user = await currentUser();
-  if (user) redirect("/hesabim");
+  const supabaseOn = isSupabaseConfigured();
+  if (!supabaseOn) {
+    const { ensureSeeded } = await import("@/lib/queries");
+    const { currentUser } = await import("@/lib/session");
+    await ensureSeeded();
+    const user = await currentUser();
+    if (user) redirect("/hesabim");
+  }
   const sp = await searchParams;
   const locale = await getLocale();
   const ref = typeof sp.ref === "string" ? sp.ref.toUpperCase() : undefined;
@@ -64,7 +68,7 @@ export default async function RegisterPage({ searchParams }: { searchParams: Pro
           </div>
         </div>
 
-        <AuthCard mode="register" lang={locale.lang} initialRef={ref} />
+        <AuthCard mode="register" lang={locale.lang} initialRef={ref} supabase={supabaseOn} />
       </div>
     </PublicShell>
   );

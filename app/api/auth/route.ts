@@ -3,6 +3,7 @@ import { db } from "@/db";
 import { referrals, users } from "@/db/schema";
 import { clearSessionCookie, currentUser, hashPassword, referralCodeFor, setSessionTokenUser, verifyPassword } from "@/lib/auth-actions";
 import { logAudit } from "@/lib/queries";
+import { isSupabaseConfigured } from "@/lib/supabase/env";
 
 export const dynamic = "force-dynamic";
 
@@ -32,7 +33,15 @@ export async function POST(req: Request) {
 
   if (action === "logout") {
     await clearSessionCookie();
+    const { signOutAction } = await import("@/lib/auth/actions");
+    await signOutAction(); // Supabase yapılandırılmışsa Auth oturumunu da kapatır; değilse işlem yapmaz
     return Response.json({ ok: true });
+  }
+
+  // Supabase yapılandırılmışsa eski (özel oturumlu) giriş/kayıt yolu kapalıdır:
+  // kimlik doğrulama yalnızca Supabase Auth üzerinden yapılır.
+  if (isSupabaseConfigured() && (action === "login" || action === "register")) {
+    return Response.json({ ok: false, error: "Bu uç devre dışı. Supabase Auth ile giriş yapın." }, { status: 410 });
   }
 
   if (action === "login") {

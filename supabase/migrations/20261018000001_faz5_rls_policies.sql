@@ -19,6 +19,13 @@
 --   * campaign_usages / bonus_grants / referrals YAZMALARINI yalnızca dv_* RPC'leri
 --     yapar (doğrudan INSERT/UPDATE politikası yoktur) → yetkisiz durum geçişi yok.
 --   * Müşteri cüzdanı/para bakiyesi tablosu YOKTUR.
+--
+-- FAZ 7 (2026-10-18) RLS sertleştirmeleri bu dosyaya işlidir:
+--   * business_staff yazması yalnızca OWNER/YÖNETİCİ (seviye atlama engeli)
+--   * notifications istemci ekleme yalnızca kendi kendine SYSTEM bildirimi
+--   * audit_logs aktör kilidi trigger'ı (sahte aktör ataması engeli)
+--   * varsayılan hizmet bedeli kuralları (business_id IS NULL) herkese açık
+--     (fiyatlandırma sayfası) — işletme özel kuralları member/admin ile sınırlı
 -- =============================================================================
 
 -- =============================================================================
@@ -228,6 +235,29 @@ drop trigger if exists profiles_guard on public.profiles;
 create trigger profiles_guard
   before update on public.profiles
   for each row execute function public.profiles_guard();
+
+-- FAZ 7 — Denetim günlüğü aktör kilidi: oturumlu istemci eklediği satırda aktörü
+-- SAHTE atayamaz; actor, JWT'deki gerçek e-postayla üzerine yazılır. (Sahte
+-- "INVOICE_PAID" gibi olayları başkasının adına yazmak engellenir; service-role
+-- / istemcisiz bağlamlarda auth.uid() null olduğunda verilen değer korunur.)
+create or replace function public.audit_logs_guard()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if auth.uid() is not null then
+    new.actor := coalesce(nullif(auth.jwt()->>'email', ''), new.actor);
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists audit_logs_guard on public.audit_logs;
+create trigger audit_logs_guard
+  before insert on public.audit_logs
+  for each row execute function public.audit_logs_guard();
 
 -- =============================================================================
 -- BÖLÜM 4 — RLS aç + GRANT (RLS asıl sınırdır; GRANT yalnızca kapıyı açar)
@@ -482,10 +512,14 @@ create policy ai_settings_admin on public.ai_settings for all
   using (public.is_admin()) with check (public.is_admin());
 
 drop policy if exists service_fee_rules_select on public.service_fee_rules;
+-- FAZ 7: platform varsayılan kuralları (business_id IS NULL) herkese açıktır —
+-- fiyatlandırma sayfası bunları her ziyaretçiye gösterir (eski davranış).
+-- İşletmeye özel kural satırları yalnızca o işletmenin personeli/yöneticisine görünür.
 create policy service_fee_rules_select on public.service_fee_rules for select
   using (
-    public.is_admin()
-    or (business_id is not null and public.is_business_member(business_id))
+    business_id is null
+    or public.is_admin()
+    or public.is_business_member(business_id)
   );
 drop policy if exists service_fee_rules_admin on public.service_fee_rules;
 create policy service_fee_rules_admin on public.service_fee_rules for all
@@ -535,10 +569,18 @@ create policy followed_businesses_own on public.followed_businesses for all
   using (user_id = auth.uid())
   with check (user_id = auth.uid());
 
+-- FAZ 7 sertleştirme: okuma/değiştirme yalnızca kendi satırı; İSTEMCİ ekleme
+-- yalnızca kendi kendine "SYSTEM" bildirimi (ör. kampanya bildirim onayı) ile
+-- sınırlıdır. BONUS/REFERRAL/CAMPAIGN/INFO bildirimleri yalnızca SECURITY
+-- DEFINER RPC'lerle üretilir → istemci sahte ödül bildirimi yazamaz.
 drop policy if exists notifications_own on public.notifications;
-create policy notifications_own on public.notifications for all
+create policy notifications_select_own on public.notifications for select
+  using (user_id = auth.uid());
+create policy notifications_update_own on public.notifications for update
   using (user_id = auth.uid())
   with check (user_id = auth.uid());
+create policy notifications_insert_self_system on public.notifications for insert
+  with check (user_id = auth.uid() and kind = 'SYSTEM');
 
 -- --------------------------------- affiliate ------------------------------------
 -- Ağ ve fırsat listesi herkese açık (durum bilgisiyle); yönetim yalnızca yönetici.
@@ -571,15 +613,20 @@ create policy affiliate_conversions_admin on public.affiliate_conversions for al
 
 -- -------------------------------- business_staff --------------------------------
 -- Okuma: kendi işletmesinin personeli (panel personel listesi) + yönetici.
--- Yazma: işletme personeli; ROl/MANAGER/CASHIER yetkileri route seviyesinde ayrıca
--- doğrulanır (staff.manage yalnızca OWNER). E-posta alanları hiçbir zaman herkese açık değildir.
+-- Yazma (FAZ 7 sertleştirme): yalnızca işletme SAHİBİ veya yönetici.
+-- Eski politika her personeline yazma izni veriyordu; bu, CASHIER/MANAGER'ın
+-- PostgREST ile kendi rolünü OWNER'a yükseltmesine (seviye atlama) yol
+-- açabilirdi. Route seviyesindeki staffCan kontrolü tek başına yeterli değildir;
+-- nihai sınır RLS'tir. Uygulama kodu business_staff'a istemci yazması YAPMAZ
+-- (personel kayıtları SQL/RLS tarafından sahip-yönetimiyle sağlanır).
 drop policy if exists business_staff_select on public.business_staff;
 create policy business_staff_select on public.business_staff for select
   using (public.is_business_member(business_id));
 drop policy if exists business_staff_write_member on public.business_staff;
-create policy business_staff_write_member on public.business_staff for all
-  using (public.is_business_member(business_id))
-  with check (public.is_business_member(business_id));
+drop policy if exists business_staff_write_owner on public.business_staff;
+create policy business_staff_write_owner on public.business_staff for all
+  using (public.is_business_staff(business_id, array['owner']))
+  with check (public.is_business_staff(business_id, array['owner']));
 
 -- BİTTİ — RPC'ler: 20261018000002_faz5_rpcs.sql
 

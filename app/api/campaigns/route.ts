@@ -4,12 +4,25 @@ import { campaigns, qrCodes } from "@/db/schema";
 import { businessActor, jsonError, staffCan } from "@/lib/auth-actions";
 import { logAudit, trackEvent } from "@/lib/queries";
 import { slugify } from "@/lib/money";
+import { isSupabaseConfigured } from "@/lib/supabase/env";
+import { businessActorLite } from "@/lib/authz";
+import { ActionError, campaignBump, campaignUpsert, campaignsList } from "@/lib/data/supabase-actions";
 
 export const dynamic = "force-dynamic";
 
 export async function GET(req: Request) {
   const url = new URL(req.url);
   const businessId = url.searchParams.get("businessId");
+  if (isSupabaseConfigured()) {
+    // RLS: herkes yalnızca görünür (onaylı + yayınlanan) kampanyaları; işletme
+    // personeli kendi taslaklarını da görür.
+    try {
+      return await campaignsList(businessId);
+    } catch (e) {
+      if (e instanceof ActionError) return jsonError(e.status, e.message);
+      throw e;
+    }
+  }
   const rows = businessId
     ? await db.select().from(campaigns).where(eq(campaigns.businessId, businessId)).orderBy(desc(campaigns.createdAt))
     : await db.select().from(campaigns).orderBy(desc(campaigns.createdAt)).limit(50);
@@ -28,6 +41,21 @@ function clamp(n: unknown, min: number, max: number, fallback = 0) {
  * istemciden gelen ham değerlere güvenilmez.
  */
 export async function POST(req: Request) {
+  /* --------------------- SUPABASE MODU (FAZ 5) ------------------------ */
+  if (isSupabaseConfigured()) {
+    const actor = await businessActorLite();
+    if (!actor) return jsonError(401, "İşletme hesabıyla giriş yapmalısınız.");
+    if (!staffCan(actor.staffRole, "campaign.write"))
+      return jsonError(403, `${actor.staffRole} rolü kampanya oluşturamaz veya düzenleyemez.`);
+    const body = await req.json().catch(() => ({}));
+    try {
+      return await campaignUpsert(actor, body as Record<string, unknown>);
+    } catch (e) {
+      if (e instanceof ActionError) return jsonError(e.status, e.message);
+      throw e;
+    }
+  }
+
   const actor = await businessActor();
   if (!actor) return jsonError(401, "İşletme hesabıyla giriş yapmalısınız.");
   if (!staffCan(actor.staffRole, "campaign.write"))
@@ -142,6 +170,15 @@ export async function PUT(req: Request) {
   const body = await req.json().catch(() => ({}));
   const id = String(body.id ?? "");
   const field = body.field === "clicks" ? "clicks" : "views";
+  if (isSupabaseConfigured()) {
+    // Sayaç artışı definer RPC ile: istemci ham satır güncelleyemez.
+    try {
+      return await campaignBump(id, field);
+    } catch (e) {
+      if (e instanceof ActionError) return jsonError(e.status, e.message);
+      throw e;
+    }
+  }
   await db
     .update(campaigns)
     .set({ [field]: sql`${campaigns[field]} + 1` } as never)

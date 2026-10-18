@@ -1,7 +1,6 @@
 import { redirect } from "next/navigation";
 import { isSupabaseConfigured } from "@/lib/supabase/env";
-import { requirePageAccess } from "@/lib/auth/guard";
-import { SupabaseAccountNotice } from "@/components/SupabaseAccountNotice";
+import { getSessionUser } from "@/lib/authz";
 import { currentUser } from "@/lib/session";
 import { ensureSeeded, getAdminData, getAffiliateData } from "@/lib/queries";
 import { getLocale } from "@/lib/locale";
@@ -16,10 +15,34 @@ export default async function AdminPage({
 }: {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
+  /* --------------------- SUPABASE MODU (FAZ 5) ------------------------ */
   if (isSupabaseConfigured()) {
-    const ctx = await requirePageAccess("/admin");
-    return <SupabaseAccountNotice ctx={ctx} title="Yönetim Paneli" />;
+    const user = await getSessionUser();
+    if (!user) redirect("/giris?next=/admin");
+    if (user.role !== "ADMIN") redirect("/hesabim");
+
+    const sp = await searchParams;
+    const locale = await getLocale();
+    const [data, affiliate] = await Promise.all([getAdminData(), getAffiliateData()]);
+
+    return (
+      <AdminDash
+        user={{
+          id: user.id,
+          name: user.name,
+          email: user.email,
+          role: user.role,
+          businessId: user.businessId,
+          referralCode: user.referralCode,
+        }}
+        data={data}
+        affiliate={affiliate}
+        locale={locale}
+        initial={typeof sp.s === "string" ? sp.s : "overview"}
+      />
+    );
   }
+
   await ensureSeeded();
   const user = await currentUser();
   if (!user) redirect("/giris?next=/admin");

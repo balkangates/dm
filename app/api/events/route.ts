@@ -1,5 +1,5 @@
 import { EVENT_KINDS, trackEvent } from "@/lib/queries";
-import { currentUser } from "@/lib/session";
+import { getSessionUser } from "@/lib/authz";
 
 export const dynamic = "force-dynamic";
 
@@ -10,7 +10,7 @@ export async function POST(req: Request) {
   const kind = String(body.kind ?? "");
   if (!ALLOWED.has(kind)) return Response.json({ ok: false, error: "Geçersiz olay türü." }, { status: 400 });
 
-  const user = await currentUser();
+  const user = await getSessionUser();
   await trackEvent(kind, {
     businessId: body.businessId ?? null,
     campaignId: body.campaignId ?? null,

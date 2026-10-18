@@ -13,6 +13,9 @@ import {
 } from "@/db/schema";
 import { currentUser, jsonError } from "@/lib/auth-actions";
 import { logAudit } from "@/lib/queries";
+import { isSupabaseConfigured } from "@/lib/supabase/env";
+import { getSessionUser } from "@/lib/authz";
+import { ActionError, adminAction } from "@/lib/data/supabase-actions";
 
 export const dynamic = "force-dynamic";
 
@@ -25,6 +28,20 @@ export const dynamic = "force-dynamic";
  * moderasyonu, bonus politikası ve fraud incelemesi yönetilir.
  */
 export async function POST(req: Request) {
+  /* --------------------- SUPABASE MODU (FAZ 5) ------------------------ */
+  if (isSupabaseConfigured()) {
+    const admin = await getSessionUser();
+    if (!admin) return jsonError(401, "Oturum gerekli.");
+    if (admin.role !== "ADMIN") return jsonError(403, "Bu işlem yalnızca platform yöneticileri içindir.");
+    const body = await req.json().catch(() => ({}));
+    try {
+      return await adminAction(admin, body as Record<string, unknown>);
+    } catch (e) {
+      if (e instanceof ActionError) return jsonError(e.status, e.message);
+      throw e;
+    }
+  }
+
   const admin = await currentUser();
   if (!admin) return jsonError(401, "Oturum gerekli.");
   if (admin.role !== "ADMIN") return jsonError(403, "Bu işlem yalnızca platform yöneticileri içindir.");
@@ -209,6 +226,11 @@ export async function POST(req: Request) {
 }
 
 export async function GET() {
+  if (isSupabaseConfigured()) {
+    const admin = await getSessionUser();
+    if (!admin || admin.role !== "ADMIN") return jsonError(403, "Yönetici erişimi gerekli.");
+    return Response.json({ ok: true, role: admin.role });
+  }
   const admin = await currentUser();
   if (!admin || admin.role !== "ADMIN") return jsonError(403, "Yönetici erişimi gerekli.");
   return Response.json({ ok: true, role: admin.role });

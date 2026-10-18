@@ -3,6 +3,15 @@ import { db } from "@/db";
 import { affiliateClicks, affiliateConversions, affiliateNetworks, affiliateOffers } from "@/db/schema";
 import { currentUser, jsonError } from "@/lib/auth-actions";
 import { getAffiliateData, logAudit, trackEvent } from "@/lib/queries";
+import { isSupabaseConfigured } from "@/lib/supabase/env";
+import { getSessionUser } from "@/lib/authz";
+import {
+  ActionError,
+  affiliateActiveCount,
+  affiliateAdminAction,
+  affiliateClick,
+  affiliateConfirmOutbound,
+} from "@/lib/data/supabase-actions";
 
 export const dynamic = "force-dynamic";
 
@@ -18,6 +27,29 @@ export const dynamic = "force-dynamic";
 export async function POST(req: Request) {
   const body = await req.json().catch(() => ({}));
   const action = String(body.action ?? "");
+
+  /* --------------------- SUPABASE MODU (FAZ 5) ------------------------ */
+  if (isSupabaseConfigured()) {
+    const user = await getSessionUser();
+    try {
+      if (action === "click") {
+        const offerId = String(body.offerId ?? "");
+        if (!offerId) return jsonError(400, "offerId gerekli.");
+        return await affiliateClick(user, offerId, String(body.channel ?? "WEB"));
+      }
+      if (action === "confirm-outbound") return await affiliateConfirmOutbound(user, String(body.clickId ?? ""));
+      // Aşağıdaki üç işlem yalnızca yöneticidir.
+      if (["report-conversion", "conversion-status", "network-status", "offer-status"].includes(action)) {
+        if (!user || user.role !== "ADMIN") return jsonError(403, "Bu işlem yalnızca platform yöneticileri içindir.");
+        return await affiliateAdminAction(user, body as Record<string, unknown>);
+      }
+      return jsonError(400, "Bilinmeyen işlem.");
+    } catch (e) {
+      if (e instanceof ActionError) return jsonError(e.status, e.message);
+      throw e;
+    }
+  }
+
   const user = await currentUser();
 
   /* ------------------------- 1) İZLENEN TIKLAMA ------------------------- */
@@ -174,10 +206,16 @@ export async function POST(req: Request) {
 export async function GET(req: Request) {
   const url = new URL(req.url);
   if (url.searchParams.get("scope") === "admin") {
+    if (isSupabaseConfigured()) {
+      const user = await getSessionUser();
+      if (!user || user.role !== "ADMIN") return jsonError(403, "Yönetici erişimi gerekli.");
+      return Response.json({ ok: true, data: await getAffiliateData() });
+    }
     const user = await currentUser();
     if (!user || user.role !== "ADMIN") return jsonError(403, "Yönetici erişimi gerekli.");
     return Response.json({ ok: true, data: await getAffiliateData() });
   }
+  if (isSupabaseConfigured()) return affiliateActiveCount();
   const offers = await db.select().from(affiliateOffers).where(eq(affiliateOffers.status, "ACTIVE"));
   return Response.json({ ok: true, count: offers.length });
 }

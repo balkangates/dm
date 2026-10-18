@@ -1,7 +1,6 @@
 import { redirect } from "next/navigation";
 import { isSupabaseConfigured } from "@/lib/supabase/env";
-import { requirePageAccess } from "@/lib/auth/guard";
-import { SupabaseAccountNotice } from "@/components/SupabaseAccountNotice";
+import { getSessionUser } from "@/lib/authz";
 import { currentUser } from "@/lib/session";
 import { ensureSeeded, getBusinessData, listBusinesses, listVideos } from "@/lib/queries";
 import { getLocale } from "@/lib/locale";
@@ -16,10 +15,49 @@ export default async function PanelPage({
 }: {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
+  /* --------------------- SUPABASE MODU (FAZ 5) ------------------------ */
   if (isSupabaseConfigured()) {
-    const ctx = await requirePageAccess("/panel");
-    return <SupabaseAccountNotice ctx={ctx} title="İşletme Paneli" />;
+    const user = await getSessionUser();
+    if (!user) redirect("/giris?next=/panel");
+
+    const sp = await searchParams;
+    const locale = await getLocale();
+
+    // Yetki: BUSINESS → business_staff üzerinden çözülen işletme; ADMIN → ?biz= denetim;
+    // CUSTOMER → yok.
+    let businessId: string | null = null;
+    if (user.role === "BUSINESS") {
+      businessId = user.businessId;
+    } else if (user.role === "ADMIN") {
+      const all = await listBusinesses();
+      businessId =
+        (typeof sp.biz === "string" ? (all.find((b) => b.slug === sp.biz)?.id ?? null) : null) ?? all[0]?.id ?? null;
+    }
+    if (!businessId) redirect(user.role === "ADMIN" ? "/admin" : "/hesabim");
+
+    const range = [7, 14, 30].includes(Number(sp.gun)) ? Number(sp.gun) : 14;
+    const [data, videos] = await Promise.all([getBusinessData(businessId, range), listVideos()]);
+    if (!data) redirect("/giris");
+
+    return (
+      <BusinessDash
+        user={{
+          id: user.id,
+          name: user.name,
+          email: user.email,
+          role: user.role,
+          businessId: user.businessId,
+          referralCode: user.referralCode,
+        }}
+        data={data}
+        locale={locale}
+        videos={videos}
+        range={range}
+        initial={typeof sp.s === "string" ? sp.s : "overview"}
+      />
+    );
   }
+
   await ensureSeeded();
   const user = await currentUser();
   if (!user) redirect("/giris?next=/panel");

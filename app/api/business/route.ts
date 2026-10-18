@@ -3,6 +3,9 @@ import { db } from "@/db";
 import { adCampaigns, aiContents, businessHours, businesses, marketingPlanDays } from "@/db/schema";
 import { businessActor, jsonError, staffCan } from "@/lib/auth-actions";
 import { logAudit } from "@/lib/queries";
+import { isSupabaseConfigured } from "@/lib/supabase/env";
+import { businessActorLite } from "@/lib/authz";
+import { ActionError, businessAction } from "@/lib/data/supabase-actions";
 
 export const dynamic = "force-dynamic";
 
@@ -21,6 +24,28 @@ const EDITABLE = [
 ] as const;
 
 export async function POST(req: Request) {
+  /* --------------------- SUPABASE MODU (FAZ 5) ------------------------ */
+  if (isSupabaseConfigured()) {
+    const actor = await businessActorLite();
+    if (!actor) return jsonError(401, "İşletme hesabıyla giriş yapmalısınız.");
+    const body = await req.json().catch(() => ({}));
+    const action = String(body.action ?? "profile");
+    // Yetki kontrolleri SUNUCUDA (eski rotayla aynı kural).
+    if (action === "profile" && !staffCan(actor.staffRole, "profile.write"))
+      return jsonError(403, `${actor.staffRole} rolü işletme profilini düzenleyemez.`);
+    if (action === "hours" && !staffCan(actor.staffRole, "profile.write")) return jsonError(403, "Yetkiniz yok.");
+    if ((action === "content_decision" || action === "content_delete") && !staffCan(actor.staffRole, "content.approve"))
+      return jsonError(403, "İçerik onayı için yetkiniz yok.");
+    if (action === "ad_request" && !staffCan(actor.staffRole, "ads.write"))
+      return jsonError(403, "Reklam talebi için yetkiniz yok.");
+    try {
+      return await businessAction(actor, body as Record<string, unknown>);
+    } catch (e) {
+      if (e instanceof ActionError) return jsonError(e.status, e.message);
+      throw e;
+    }
+  }
+
   const actor = await businessActor();
   if (!actor) return jsonError(401, "İşletme hesabıyla giriş yapmalısınız.");
   const body = await req.json().catch(() => ({}));

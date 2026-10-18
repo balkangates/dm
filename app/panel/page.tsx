@@ -3,6 +3,8 @@ import { getSessionUser } from "@/lib/authz";
 import { getBusinessData, listBusinesses, listVideos } from "@/lib/queries";
 import { getLocale } from "@/lib/locale";
 import { BusinessDash } from "@/components/dashpages";
+import { PublicShell, type SessionLite } from "@/components/Shell";
+import { Button } from "@/components/ds";
 
 export const dynamic = "force-dynamic";
 
@@ -39,7 +41,34 @@ export default async function PanelPage({
 
   const range = [7, 14, 30].includes(Number(sp.gun)) ? Number(sp.gun) : 14;
   const [data, videos] = await Promise.all([getBusinessData(businessId, range), listVideos()]);
-  if (!data) redirect("/giris");
+  if (!data) {
+    // Çevrim engeli (FAZ 9 canlı testi): /giris'e yönlendirme girişli kullanıcıyı
+    // yeniden /panel'e taşıyordu (ERR_TOO_MANY_REDIRECTS). Panel içinde dürüst
+    // durum ekranı gösterilir; yönlendirme yapılmaz.
+    const session: SessionLite = {
+      id: user.id,
+      name: user.name,
+      email: user.email,
+      role: user.role,
+      businessId: user.businessId,
+      referralCode: user.referralCode,
+    };
+    return (
+      <PublicShell user={session} lang={locale.lang} currency={locale.currency} country={locale.country}>
+        <div className="mx-auto max-w-[720px] px-4 py-24 text-center">
+          <h1 className="font-display text-[1.6rem] font-bold">İşletme kaydı bulunamadı</h1>
+          <p className="mx-auto mt-3 max-w-[46ch] text-[0.95rem] leading-relaxed text-muted">
+            Hesabın bir işletme kaydına bağlı değil veya işletme verisi okunamadı.
+            Yönlendirme döngüsünü önlemek için bu durum panel içinde gösteriliyor.
+          </p>
+          <div className="mt-7 flex justify-center gap-3">
+            <Button href="/hesabim" variant="primary">Hesabım</Button>
+            <Button href="/" variant="secondary">Ana sayfa</Button>
+          </div>
+        </div>
+      </PublicShell>
+    );
+  }
 
   return (
     <BusinessDash

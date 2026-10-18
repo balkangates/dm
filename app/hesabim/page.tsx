@@ -18,7 +18,10 @@ export default async function AccountPage({
   const user = await getSessionUser();
   if (!user) redirect("/giris?next=/hesabim");
   if (user.role === "ADMIN") redirect("/admin");
-  if (user.role === "BUSINESS") redirect("/panel");
+  // Çevrim engeli (FAZ 9 canlı testi): businessId'siz BUSINESS hesabı panele
+  // gönderilirse /panel onu geri /hesabim'e yönlendirir → ERR_TOO_MANY_REDIRECTS.
+  // Yalnızca gerçekten işletme kaydı varsa panele yönlendirilir.
+  if (user.role === "BUSINESS" && user.businessId) redirect("/panel");
 
   const sp = await searchParams;
   const locale = await getLocale();

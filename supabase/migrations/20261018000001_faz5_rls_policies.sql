@@ -6,7 +6,8 @@
 -- ÖNKOŞUL: v3 şeması (20261017000003 veya canlıya uygulanmış karşılığı) mevcut olmalı.
 --          Büyük harfli personel rolü varsa 20261017000004 yaması önce uygulanır.
 -- İDEMPOTENT: politikalar drop-if-exists + create ile yeniden kurulur; tekrar
---          çalıştırmak güvenlidir.
+--          çalıştırmak güvenlidir. BÖLÜM 0, önceki çalışmalardan kalan farklı
+--          imzalı yardımcı fonksiyon yüklemelerini de temizler (42725 önler).
 --
 -- GÜVENLİK KATMANLARI (prompt kuralı):
 --   1) Middleware            → oturum yenileme + ilk rota kontrolü
@@ -27,6 +28,39 @@
 --   * varsayılan hizmet bedeli kuralları (business_id IS NULL) herkese açık
 --     (fiyatlandırma sayfası) — işletme özel kuralları member/admin ile sınırlı
 -- =============================================================================
+
+-- =============================================================================
+-- BÖLÜM 0 — Ortam temizliği: ESKİ politika katmanı + çakışan fonksiyonlar
+-- (Canlı şablondan/kalıcı önceki kurulumdan eski RLS politikaları ve farklı
+--  imzalı yardımcı fonksiyon yüklemeleri bulunabilir. Eski politikalar ÖNCE
+--  kaldırılır:
+--   * is_admin/is_business_member üzerindeki bağımlılık çözülür (2BP01 önlenir),
+--   * eski GEVŞEK politikalar (ör. business_staff_write) yeni SIKI politikalarla
+--     yan yana kalmaz — RLS'te politikalar OR ile birleşir; eski gevşek kural
+--     seviye atlama açığı yeniden açardı.
+--  Ardından aynı adla TÜM mevcut fonksiyon yüklemeleri teker teker silinir;
+--  BÖLÜM 1+ doğru imzalarla yeniden kurar. Bir hata olursa tüm işlem geri
+--  alınır (canlıda net değişiklik olmaz; hata mesajı paylaşılırsa çözülür.)
+-- =============================================================================
+do $$
+declare r record;
+begin
+  for r in
+    select policyname, tablename from pg_policies where schemaname = 'public'
+  loop
+    execute format('drop policy if exists %I on public.%I', r.policyname, r.tablename);
+  end loop;
+
+  for r in
+    select p.oid::regprocedure as sig
+      from pg_proc p
+      join pg_namespace n on n.oid = p.pronamespace
+     where n.nspname = 'public'
+       and p.proname in ('is_admin', 'is_business_member', 'is_business_staff')
+  loop
+    execute format('drop function if exists %s', r.sig);
+  end loop;
+end $$;
 
 -- =============================================================================
 -- BÖLÜM 1 — Yardımcı yetki fonksiyonları (security definer, RLS özyinelemesi yok)

@@ -3,7 +3,8 @@
 -- FAZ 5 — Sunucu iş mantığı RPC'leri (PostgREST üzerinden çağrılır).
 --
 -- ÖNKOŞUL: 20261018000001_faz5_rls_policies.sql uygulanmış olmalı (is_admin,
---          is_business_member, is_business_staff fonksiyonları bu dosyada tanımlıdır).
+--          is_business_member, is_business_staff fonksiyonları 0001 dosyasında
+--          tanımlıdır).
 -- İDEMPOTENT: tüm fonksiyonlar CREATE OR REPLACE ile güncellenir.
 --
 -- NEDEN RPC?
@@ -230,9 +231,12 @@ begin
   end if;
 
   select * into v_qr from qr_codes where code = v_code limit 1;
-  if v_qr.id is not null and v_qr.campaign_id is not null then
-    select * into v_campaign from campaigns where id = v_qr.campaign_id limit 1;
-  end if;
+  -- Düzeltme: v_campaign'a ilk SELECT her yolda çalıştırılır — hiç atanmamış
+  -- record'a alan erişimi "is not assigned yet" hatası verirdi (QR kaydı
+  -- yokken ilk dal hiç çalışmıyordu).
+  select * into v_campaign from campaigns
+   where id = coalesce(v_qr.campaign_id, '00000000-0000-0000-0000-000000000000'::uuid)
+   limit 1;
   if v_campaign.id is null then
     select * into v_campaign from campaigns where code = v_code limit 1;
   end if;
@@ -326,9 +330,13 @@ begin
 end $$;
 
 -- QR akışının kampanya çıktısı (eski serializeCampaign ile aynı alanlar)
+-- 42P13 düzeltmesi: PostgreSQL, SQL (language sql) fonksiyonlarında 'record'
+-- türünde argüman kabul etmez. Bu yardımcı yalnızca dv_qr_scan içinden çağrılır;
+-- plpgsql 'record' parametresini desteklediği için dil plpgsql'ye çevrilmiştir.
 create or replace function public.dv_qr_campaign_json(c record, b record)
-returns jsonb language sql immutable as $$
-  select jsonb_build_object(
+returns jsonb language plpgsql stable as $$
+begin
+  return jsonb_build_object(
     'id', c.id, 'code', c.code, 'slug', c.slug, 'title', c.title,
     'description', c.description, 'terms', c.terms, 'type', c.type,
     'discountPercent', c.discount_percent, 'discountAmountCents', c.discount_amount_cents,
@@ -342,7 +350,8 @@ returns jsonb language sql immutable as $$
     'perCustomerLimit', c.per_customer_limit, 'usageLimit', c.usage_limit,
     'businessName', b.name, 'businessSlug', b.slug,
     'district', b.district, 'city', b.city, 'address', b.address
-  )
+  );
+end;
 $$;
 
 /**
@@ -606,7 +615,7 @@ begin
     raise exception 'Bu bonus zaten kullanılmış.';
   end if;
   if v_bonus.status <> 'AVAILABLE' then
-    raise exception 'Bonus şu an kullanılamaz (durum: ' || v_bonus.status || ').';
+    raise exception 'Bonus şu an kullanılamaz (durum: %).', v_bonus.status;
   end if;
   if v_bonus.expires_at is not null and v_bonus.expires_at < now() then
     update bonus_grants set status = 'EXPIRED' where id = p_bonus_id;

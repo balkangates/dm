@@ -591,6 +591,16 @@ export async function adminAction(user: SessionUserLite, body: Row) {
       await logAudit(user.email, "ADMIN", "BUSINESS_SIGNUP_APPROVED", "profiles", userId, data as Row);
       return Response.json({ ok: true, business: data });
     }
+    case "revoke_business": {
+      // FAZ 10 — onay geri alma: işletme askıya alınır (suspended_at),
+      // personel bağlantıları kapanır, rol customer'a döner (dv_admin_revoke_business).
+      const userId = String(body.user_id ?? "");
+      if (!userId) throw new ActionError(400, "Kullanıcı gerekli.");
+      const { data, error } = await client.rpc("dv_admin_revoke_business", { p_user_id: userId });
+      if (error) fail(error);
+      await logAudit(user.email, "ADMIN", "BUSINESS_SIGNUP_REVOKED", "profiles", userId, data as Row);
+      return Response.json({ ok: true, revoke: data });
+    }
     case "campaign_moderate": {
       const decision = String(body.decision ?? "");
       if (!["APPROVED", "REJECTED", "PENDING"].includes(decision)) throw new ActionError(400, "Geçersiz karar.");

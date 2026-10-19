@@ -226,7 +226,8 @@ export async function listCampaignCards(opts?: { limit?: number; district?: stri
     .from("campaigns")
     .select(CARD_SELECT)
     .eq("status", "PUBLISHED")
-    .eq("moderation_status", "APPROVED");
+    .eq("moderation_status", "APPROVED")
+    .filter("businesses.suspended_at", "is", null);
   if (opts?.district) q = q.eq("businesses.district", opts.district);
   if (opts?.category) q = q.eq("businesses.category", opts.category);
   const { data } = await q
@@ -241,6 +242,7 @@ export async function getCampaignBySlug(slug: string) {
   const { data: rows } = await client
     .from("campaigns")
     .select(CARD_SELECT)
+    .filter("businesses.suspended_at", "is", null)
     .or(`slug.eq.${slug},code.eq.${slug}`)
     .limit(1);
   if (!rows?.[0]) return null;
@@ -268,7 +270,7 @@ export async function getCampaignBySlug(slug: string) {
 
 export async function getBusinessBySlug(slug: string) {
   const client = await sb();
-  const { data: biz } = await client.from("businesses").select("*").eq("slug", slug).maybeSingle();
+  const { data: biz } = await client.from("businesses").select("*").eq("slug", slug).is("suspended_at", null).maybeSingle();
   if (!biz) return null;
   const businessId = str(biz.id);
   const [hours, prods, media, revs, camps, staff] = await Promise.all([
@@ -327,6 +329,7 @@ export async function listBusinesses() {
   const { data } = await client
     .from("businesses")
     .select("*")
+    .is("suspended_at", null)
     .order("featured", { ascending: false })
     .order("rating", { ascending: false });
   return ((data ?? []) as Row[]).map(mapBusiness);
@@ -388,7 +391,7 @@ export async function getCustomerData(userId: string) {
       ? client.from("campaigns").select(CARD_SELECT).in("id", savedIds)
       : Promise.resolve({ data: [] as Row[] }),
     bizIds.length
-      ? client.from("businesses").select("*").in("id", bizIds)
+      ? client.from("businesses").select("*").is("suspended_at", null).in("id", bizIds)
       : Promise.resolve({ data: [] as Row[] }),
     (async () => {
       const ids = Array.from(new Set(usageRows.map((u) => nul(u.campaign_id)).filter(Boolean) as string[]));
@@ -748,7 +751,7 @@ export async function getBusinessData(businessId: string, days = 14) {
 
 export async function getAdminData() {
   const client = await sb();
-  const [biz, profiles, camps, usages, refs, bonuses, policies, pkgs, feeRules, invs, ads, fraud, audit, aiSet, contents, events, reqs] =
+  const [biz, profiles, camps, usages, refs, bonuses, policies, pkgs, feeRules, invs, ads, fraud, audit, aiSet, contents, events, reqs, staff] =
     await Promise.all([
       client.from("businesses").select("*").order("created_at", { ascending: false }),
       client.from("profiles").select("*").order("created_at", { ascending: false }),
@@ -767,6 +770,7 @@ export async function getAdminData() {
       client.from("ai_contents").select("*").order("created_at", { ascending: false }).limit(20),
       client.from("analytics_events").select("*").limit(2000),
       client.from("business_requests").select("*").eq("status", "pending"),
+      client.from("business_staff").select("*"),
     ]);
 
   const bizRows = (biz.data ?? []) as Row[];
@@ -779,6 +783,7 @@ export async function getAdminData() {
   const fraudRows = (fraud.data ?? []) as Row[];
   const eventRows = (events.data ?? []) as Row[];
   const reqRows = (reqs.data ?? []) as Row[];
+  const staffRows = (staff.data ?? []) as Row[];
   const evCount = (k: string) => eventRows.filter((e) => str(e.kind) === k).length;
 
   return {
@@ -819,6 +824,7 @@ export async function getAdminData() {
       planCode: str(b.plan_code),
       verified: Boolean(b.verified),
       featured: Boolean(b.featured),
+      suspended: Boolean(b.suspended_at),
       rating: n(b.rating),
       reviewCount: n(b.review_count),
       campaigns: campRows.filter((c) => str(c.business_id) === str(b.id)).length,
@@ -854,6 +860,29 @@ export async function getAdminData() {
           },
         ];
       })
+    ),
+    // FAZ 10 (geri alma) — personel bağlantıları (userId → işletme).
+    // Aktif bağlantı tercih edilir; pasif (askıya alınmış) bağlantı da
+    // gösterilir ki yönetici "Askıdan al"abilsin.
+    owners: Object.fromEntries(
+      Object.values(
+        staffRows
+          .filter((s) => nul(s.user_id))
+          .reduce<Record<string, Row>>((acc, s) => {
+            const uid = str(s.user_id);
+            const prev = acc[uid];
+            if (!prev || (Boolean(s.active) && !prev.active)) acc[uid] = s;
+            return acc;
+          }, {})
+      ).map((s) => [
+        str(s.user_id),
+        {
+          businessId: str(s.business_id),
+          businessName: pickStr(bizRows, s.business_id, "name"),
+          staffRole: str(s.role),
+          active: Boolean(s.active),
+        },
+      ])
     ),
     campaigns: campRows.map((c) => ({
       id: str(c.id),

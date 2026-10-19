@@ -108,6 +108,7 @@ export default function AdminDashboard({ data, lang, currency, section, affiliat
           <thead><tr><Th>Ad</Th><Th>E-posta</Th><Th>Rol</Th><Th>İşletme talebi</Th><Th>Konum</Th><Th>Dil / Para</Th><Th>Davet kodu</Th><Th right>Etkinlik</Th></tr></thead>
           <tbody>{rows.map((u) => {
             const req = data.pendingApprovals[u.id];
+            const own = data.owners[u.id];
             return (
               <tr key={u.id}><Td strong>{u.name}</Td><Td>{u.email}</Td><Td><Badge tone={u.role === "ADMIN" ? "accent" : u.role === "BUSINESS" ? "dark" : "neutral"}>{u.role}</Badge></Td>
                 <Td>{req ? (
@@ -115,6 +116,16 @@ export default function AdminDashboard({ data, lang, currency, section, affiliat
                     <Badge tone="warning">Bekliyor</Badge>
                     <span className="text-[0.76rem] text-muted">{req.name} · {req.category} · {req.district}</span>
                     <Button size="sm" onClick={() => void ask("İşletme onayı", `${u.name} → ${req.name}. Kullanıcının rolü business olur; işletme ve sahip personel kaydı açılır, paneli açılır.`, () => act({ action: "approve_business", user_id: u.id }, "İşletme onaylandı — panel açıldı"))}>Onayla</Button>
+                  </span>
+                ) : own ? (
+                  <span className="flex items-center gap-2">
+                    <Badge tone={own.active ? "dark" : "danger"}>{own.active ? "Onaylı" : "Askıda"}</Badge>
+                    <span className="text-[0.76rem] text-muted">{own.businessName} · {own.staffRole}</span>
+                    {own.active ? (
+                      <Button size="sm" variant="secondary" onClick={() => void ask("Onayı geri al", `${u.name} → ${own.businessName}. İşletme askıya alınır (siteden gizlenir), panel erişimi kapanır, rolü customer olur.`, () => act({ action: "revoke_business", user_id: u.id }, "Onay geri alındı — işletme askıya alındı"))}>Geri al</Button>
+                    ) : (
+                      <Button size="sm" onClick={() => void ask("Askıdan al", `${u.name} → ${own.businessName}. İşletme yeniden yayına alınır, personel bağlantısı aktif olur, rolü business olur.`, () => act({ action: "approve_business", user_id: u.id }, "İşletme askıdan alındı"))}>Askıdan al</Button>
+                    )}
                   </span>
                 ) : "-"}</Td>
                 <Td>{u.district ?? "-"} / {u.country}</Td><Td className="tabular">{u.lang} · {u.currency}</Td><Td className="tabular">{u.referralCode}</Td><Td right>{u.usages}</Td></tr>
@@ -133,7 +144,7 @@ export default function AdminDashboard({ data, lang, currency, section, affiliat
       <tbody>{data.businesses.map((b) => (<tr key={b.id}>
         <Td strong>{b.name}<span className="ml-2 text-[0.72rem] text-muted">{b.slug}</span></Td><Td>{b.category}</Td><Td>{b.district}, {b.city} · {b.country}</Td>
         <Td><Badge tone={b.planCode === "BOOST" ? "accent" : b.planCode === "PRO" ? "dark" : "neutral"}>{b.planCode}</Badge></Td><Td right>{b.campaigns}</Td>
-        <Td>{b.verified ? <Badge tone="positive">Doğrulandı</Badge> : <Badge tone="warning">Bekliyor</Badge>}</Td>
+        <Td>{b.suspended ? <Badge tone="danger">Askıda</Badge> : b.verified ? <Badge tone="positive">Doğrulandı</Badge> : <Badge tone="warning">Bekliyor</Badge>}</Td>
         <Td right><span className="inline-flex gap-1.5">
           <Button size="sm" variant="secondary" onClick={() => ask(b.verified ? "Doğrulamayı kaldır" : "İşletmeyi doğrula", `${b.name} — doğrulama durumu değişecek.`, () => act({ action: "business_verify", id: b.id, verified: !b.verified }, "Kayıt güncellendi"))}>{b.verified ? "Kaldır" : "Doğrula"}</Button>
           <Select value={b.planCode} onChange={(e) => void ask("Paket değiştir", `${b.name} → ${e.target.value}. Faturalandırma yeni pakete göre yapılır.`, () => act({ action: "business_plan", id: b.id, planCode: e.target.value }, "Paket güncellendi"))} className="h-8 py-0 text-[0.78rem]">

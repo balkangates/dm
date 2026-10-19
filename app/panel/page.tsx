@@ -68,7 +68,8 @@ export default async function PanelPage({
             Yönlendirme döngüsünü önlemek için bu durum panel içinde gösteriliyor.
           </p>
           <div className="mt-7 flex justify-center gap-3">
-            <Button href="/hesabim" variant="primary">Hesabım</Button>
+            <Button href="/hesabim/isletme-ac" variant="primary">İşletme Aç</Button>
+            <Button href="/hesabim" variant="secondary">Hesabım</Button>
             <Button href="/" variant="secondary">Ana sayfa</Button>
           </div>
         </div>

@@ -10,7 +10,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { trackEvent, logAudit } from "@/lib/queries";
 import { slugify } from "@/lib/money";
-import type { BusinessActorLite, SessionUserLite } from "@/lib/authz";
+import { getSessionUser, type BusinessActorLite, type SessionUserLite } from "@/lib/authz";
 
 type Row = Record<string, unknown>;
 
@@ -56,6 +56,47 @@ export async function qrSubmit(usageId: string, basket: number | null) {
   });
   if (error) fail(error);
   return Response.json(data as Row);
+}
+
+/* ================================================================== *
+ * FAZ 10 — "İşletme Aç" öz-kayıtı (dv_business_signup RPC)
+ * ================================================================== */
+export async function openBusinessAction(body: Row) {
+  const u = await getSessionUser();
+  if (!u) throw new ActionError(401, "Giriş yapmalısınız.");
+  if (u.role === "ADMIN") throw new ActionError(403, "Yönetici hesapları işletme açamaz.");
+
+  const name = String(body.name ?? "").trim();
+  const category = String(body.category ?? "").trim();
+  const district = String(body.district ?? "").trim();
+  const city = String(body.city ?? "").trim();
+  const address = String(body.address ?? "").trim();
+  const phone = String(body.phone ?? "").trim();
+  const description = String(body.description ?? "").trim();
+
+  // Doğrulama — RPC içindekiyle AYNI sınırlar (çift katman).
+  if (name.length < 2 || name.length > 120) throw new ActionError(400, "İşletme adı 2-120 karakter olmalı.");
+  if (category.length < 2 || category.length > 60) throw new ActionError(400, "Kategori 2-60 karakter olmalı.");
+  if (district.length < 2 || district.length > 60) throw new ActionError(400, "İlçe 2-60 karakter olmalı.");
+  if ((city || "İstanbul").length > 60) throw new ActionError(400, "İl en fazla 60 karakter olabilir.");
+  if (address.length < 5 || address.length > 240) throw new ActionError(400, "Adres 5-240 karakter olmalı.");
+  if (phone && (phone.length < 7 || phone.length > 20 || !/^[0-9+() -]+$/.test(phone)))
+    throw new ActionError(400, "Telefon geçerli değil.");
+  if (description.length > 400) throw new ActionError(400, "Açıklama en fazla 400 karakter olabilir.");
+
+  const client = await sb();
+  const { data, error } = await client.rpc("dv_business_signup", {
+    p_name: name,
+    p_category: category,
+    p_district: district,
+    p_city: city || "İstanbul",
+    p_address: address,
+    p_slug: slugify(name),
+    p_phone: phone || null,
+    p_description: description || null,
+  });
+  if (error) fail(error);
+  return Response.json({ ok: true, business: data });
 }
 
 export async function qrVerifyReject(

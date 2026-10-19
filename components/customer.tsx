@@ -76,6 +76,22 @@ export default function CustomerDashboard({
           <Kpi label="Davet edilen arkadaş" value={local.referrals.length} icon={<Icon.users size={16} />} />
         </div>
 
+        {!user.businessId && (
+          <Card className="mt-6">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <p className="font-semibold">Kendi işletmeni aç</p>
+                <p className="mt-1 text-[0.86rem] leading-relaxed text-muted">
+                  İşletme paneli, kampanya yönetimi ve QR takibi için işletme kaydı oluştur — birkaç alan doldur yeter.
+                </p>
+              </div>
+              <Button href="/hesabim/isletme-ac" variant="primary" icon={<Icon.store size={15} />}>
+                İşletme Aç
+              </Button>
+            </div>
+          </Card>
+        )}
+
         <Card className="mt-6">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>

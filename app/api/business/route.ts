@@ -1,6 +1,6 @@
 import { jsonError, staffCan } from "@/lib/auth-actions";
 import { businessActorLite } from "@/lib/authz";
-import { ActionError, businessAction } from "@/lib/data/supabase-actions";
+import { ActionError, businessAction, openBusinessAction } from "@/lib/data/supabase-actions";
 
 export const dynamic = "force-dynamic";
 
@@ -10,10 +10,22 @@ export const dynamic = "force-dynamic";
  * yalnızca kendi işletmesinin satırlarını değiştirebilir).
  */
 export async function POST(req: Request) {
-  const actor = await businessActorLite();
-  if (!actor) return jsonError(401, "İşletme hesabıyla giriş yapmalısınız.");
   const body = await req.json().catch(() => ({}));
   const action = String(body.action ?? "profile");
+
+  // FAZ 10 — "İşletme Aç": işletme bağlantısı OLMAYAN girişli kullanıcılar içindir
+  // ve businessActorLite'ın ÖNCESİNDE değerlendirilir (çağıranın henüz işletmesi yoktur).
+  if (action === "open") {
+    try {
+      return await openBusinessAction(body as Record<string, unknown>);
+    } catch (e) {
+      if (e instanceof ActionError) return jsonError(e.status, e.message);
+      throw e;
+    }
+  }
+
+  const actor = await businessActorLite();
+  if (!actor) return jsonError(401, "İşletme hesabıyla giriş yapmalısınız.");
 
   if (action === "profile" && !staffCan(actor.staffRole, "profile.write"))
     return jsonError(403, `${actor.staffRole} rolü işletme profilini düzenleyemez.`);

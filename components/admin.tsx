@@ -136,6 +136,9 @@ export default function AdminDashboard({ data, lang, currency, section, affiliat
           })}</tbody>
         </Table>
         <Pagination page={safePage} pages={pages} onPage={setPage} />
+        {/* Onayla / Geri al / Askıdan al butonları ask() ile dialog ister —
+            bu bölümde ConfirmDialog render edilmezse butonlar hiçbir şey yapmaz. */}
+        <ConfirmDialog confirm={confirm} onClose={() => setConfirm(null)} />
       </Wrap>
     );
   }

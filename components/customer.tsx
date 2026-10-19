@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   Badge, Button, Card, EmptyState, Field, Icon, IconButton, Input, Kpi, Notice, Progress, QrPanel,
   Select, Table, Td, Th, ToastProvider, useToast,
@@ -14,6 +14,7 @@ import { makeT } from "@/lib/i18n";
 import { money, relative, shortDate, type Currency, type Lang } from "@/lib/money";
 import type { CampaignCard } from "@/lib/queries";
 import type { SessionLite } from "@/components/Shell";
+import { getBrowserSupabase } from "@/lib/supabase/client";
 
 export type CustomerData = Awaited<ReturnType<typeof import("@/lib/queries").getCustomerData>>;
 
@@ -43,6 +44,44 @@ export default function CustomerDashboard({
   const t = makeT(lang);
   const toast = useToast();
   const [local, setLocal] = useState(data);
+
+  // FAZ 11 — Gerçek zamanlı bildirimler: yalnızca KENDİ bildirim satırlarınız
+  // dinlenir (postgres_changes + user_id filtresi + RLS publish_restricted).
+  // Sahte/üretilmiş canlı veri üretilmez; yalnızca gerçek INSERT'ler gösterilir.
+  const toastRef = useRef(toast);
+  toastRef.current = toast;
+  useEffect(() => {
+    if (section !== "notifications") return;
+    const sb = getBrowserSupabase();
+    const ch = sb
+      .channel(`notif-${user.id}`)
+      .on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "notifications", filter: `user_id=eq.${user.id}` },
+        (payload) => {
+          const x = payload.new as Record<string, unknown>;
+          const incoming = {
+            id: String(x.id),
+            kind: String(x.kind ?? "SYSTEM"),
+            title: String(x.title ?? ""),
+            body: x.body == null ? null : String(x.body),
+            link: x.link == null ? null : String(x.link),
+            read: Boolean(x.read),
+            createdAt: x.created_at == null ? null : String(x.created_at),
+          };
+          setLocal((p) =>
+            p.notifications.some((n) => n.id === incoming.id)
+              ? p
+              : { ...p, notifications: [incoming, ...p.notifications] },
+          );
+          toastRef.current.push({ title: "Yeni bildirim", desc: incoming.title, tone: "positive" });
+        },
+      )
+      .subscribe();
+    return () => {
+      void sb.removeChannel(ch);
+    };
+  }, [section, user.id]);
 
   async function api(body: Record<string, unknown>, okMsg: string) {
     const res = await fetch(body._route ? String(body._route) : "/api/account", {

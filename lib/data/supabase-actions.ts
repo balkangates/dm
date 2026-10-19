@@ -540,6 +540,47 @@ export async function businessAction(actor: BusinessActorLite, body: Row) {
     return Response.json({ ok: true, content: cam(row as Row) });
   }
 
+  if (action === "video_upload") {
+    // FAZ 11 — Dosya tarayıcıdan DOĞRUDAN Storage'a yüklendi (Vercel gövde
+    // limiti nedeniyle sunucu üzerinden geçirilemez). Burada yalnızca yol +
+    // kayıt doğrulanır: yol bu işletmenin klasöründe başlamalı, kayıt
+    // video_assets tablosuna işletme-üyesi INSERT ile düşer (RLS sınırı).
+    const storagePath = String(body.storagePath ?? "");
+    const prefix = `${actor.businessId}/`;
+    if (!storagePath.startsWith(prefix) || storagePath.length > 300 || storagePath.includes("..")) {
+      throw new ActionError(400, "Geçersiz dosya yolu.");
+    }
+    const title = String(body.title ?? "Yüklenen video").slice(0, 120);
+    const { data: row, error } = await client
+      .from("video_assets")
+      .insert({
+        business_id: actor.businessId,
+        kind: "UPLOADED_EDIT",
+        topic: "UPLOADED_EDIT",
+        title,
+        storage_path: storagePath,
+        status: "DRAFT",
+        created_by: actor.email,
+      })
+      .select("*")
+      .maybeSingle();
+    if (error || !row) fail(error);
+    // Hizmet talebi kaydı — mevcut video_request akışıyla tutarlı (best-effort;
+    // ana kayıt video_assets olduğu için ikincil hata kullanıcıyı kilitlemesin).
+    await client.from("ai_contents").insert({
+      business_id: actor.businessId,
+      kind: "VIDEO_EDIT_REQUEST",
+      platform: "DampingVar Video Hizmeti",
+      title: `Video düzenleme talebi — ${title}`,
+      body: "Yüklenen dosya güvenli biçimde Storage'a kaydedildi. Kesim, altyazı ve marka uyumu düzenlemesi ücretli hizmet olarak sunulur.",
+      cta: "Talebi değerlendir",
+      status: "DRAFT",
+      meta: { storagePath, integration: "STORAGE_CONNECTED", renderStatus: "NOT_RENDERED" },
+    });
+    await logAudit(actor.email, actor.staffRole, "VIDEO_UPLOADED", "video_assets", str(row.id), { storagePath });
+    return Response.json({ ok: true, video: cam(row as Row) });
+  }
+
   if (action === "ad_request") {
     const { data: row, error } = await client
       .from("ad_campaigns")

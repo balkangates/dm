@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   AreaLine, Badge, BarChart, Button, Card, Checkbox, Dialog, Donut, EmptyState, Field, Funnel, HBars,
   Icon, Input, Kpi, Notice, Progress, QrPanel, Select, Table, Tabs, Td, Textarea, Th, Toggle, VideoModule, useToast,
@@ -9,6 +9,7 @@ import { DashSectionHead, StatusBadge, type NavItem } from "@/components/Dash";
 import { makeT } from "@/lib/i18n";
 import { daysUntil, money, num, pct, shortDate, type Currency, type Lang } from "@/lib/money";
 import type { getBusinessData } from "@/lib/queries";
+import { getBrowserSupabase } from "@/lib/supabase/client";
 
 export type BusinessData = Awaited<ReturnType<typeof getBusinessData>>;
 type NonNull<T> = T extends null ? never : T;
@@ -41,6 +42,7 @@ export type StudioVideo = {
   id: string; topic: string; title: string; durationSec: number;
   scenes: { at: string; visual: string; caption: string }[];
   captions: Record<string, string[]>; steps: string[]; poster: string | null;
+  storagePath: string | null;
   renderStatus: string; status: string;
 };
 
@@ -375,6 +377,8 @@ function CampaignsSection({ d, lang, currency, post }: { d: BD; lang: Lang; curr
   const [busy, setBusy] = useState(false);
   const [tab, setTab] = useState("ALL");
   const t = makeT(lang);
+  const toast = useToast();
+  const [imgUploading, setImgUploading] = useState(false);
 
   function openNew() { setEditing(null); setF({ ...EMPTY, currency: d.biz.currency ?? currency }); setErrors({}); setPreview(false); setOpen(true); }
   function openEdit(id: string) {
@@ -382,6 +386,38 @@ function CampaignsSection({ d, lang, currency, post }: { d: BD; lang: Lang; curr
     setEditing(id);
     setF({ ...EMPTY, title: c.title, description: c.description ?? "", terms: c.terms ?? "", type: c.type, discountPercent: c.discountPercent, discountAmountCents: c.discountAmountCents, minBasketCents: c.minBasketCents, currency: c.currency, startsAt: (c.startsAt ?? "").slice(0, 10), endsAt: (c.endsAt ?? "").slice(0, 10), timeStart: c.timeStart ?? "", timeEnd: c.timeEnd ?? "", eligibleItems: c.eligibleItems.join(", "), exclusions: c.exclusions.join(", "), imageUrl: c.imageUrl ?? "", perCustomerLimit: c.perCustomerLimit, usageLimit: c.usageLimit ?? 500, qrEnabled: c.qrEnabled });
     setErrors({}); setPreview(false); setOpen(true);
+  }
+
+  /** Kampanya görselini tarayıcıdan doğrudan Supabase Storage'a yükler (FAZ 11). */
+  async function uploadCampaignImage(file: File) {
+    const MAX = 5 * 1024 * 1024;
+    const okTypes = ["image/jpeg", "image/png", "image/webp"];
+    if (!okTypes.includes(file.type)) {
+      toast.push({ title: "Geçersiz dosya türü", desc: "Yalnızca JPG, PNG veya WebP yüklenebilir.", tone: "danger" });
+      return;
+    }
+    if (file.size > MAX) {
+      toast.push({ title: "Dosya çok büyük", desc: "Görsel en fazla 5MB olabilir.", tone: "danger" });
+      return;
+    }
+    setImgUploading(true);
+    try {
+      const sb = getBrowserSupabase();
+      const ext = file.type === "image/png" ? "png" : file.type === "image/webp" ? "webp" : "jpg";
+      const path = `${d.biz.id}/${crypto.randomUUID()}.${ext}`;
+      const { data, error } = await sb.storage.from("campaign-media").upload(path, file, { contentType: file.type, upsert: false });
+      if (error) {
+        toast.push({ title: "Yükleme başarısız", desc: error.message, tone: "danger" });
+        return;
+      }
+      const { data: pub } = sb.storage.from("campaign-media").getPublicUrl(data.path);
+      setF((prev) => ({ ...prev, imageUrl: pub.publicUrl }));
+      toast.push({ title: "Görsel yüklendi", desc: "Kampanya görseli forma eklendi.", tone: "positive" });
+    } catch {
+      toast.push({ title: "Yükleme başarısız", desc: "Ağ hatası oluştu; tekrar dene.", tone: "danger" });
+    } finally {
+      setImgUploading(false);
+    }
   }
 
   function validate() {
@@ -512,6 +548,27 @@ function CampaignsSection({ d, lang, currency, post }: { d: BD; lang: Lang; curr
             <Field label="Müşteri başına"><Input type="number" min={1} value={f.perCustomerLimit} onChange={(e) => setF({ ...f, perCustomerLimit: Number(e.target.value) })} /></Field>
             <Field label="Uygun ürün/hizmetler" hint="Virgülle ayır" className="sm:col-span-2"><Input value={f.eligibleItems} onChange={(e) => setF({ ...f, eligibleItems: e.target.value })} /></Field>
             <Field label="İstisnalar" hint="Virgülle ayır" className="sm:col-span-2"><Input value={f.exclusions} onChange={(e) => setF({ ...f, exclusions: e.target.value })} /></Field>
+            <Field label="Kampanya görseli" hint="JPG, PNG veya WebP — en fazla 5MB. Yüklenen görsel herkese açık bucket'ta saklanır; bağlantıyı elle de girebilirsin." className="sm:col-span-2">
+              <div className="flex gap-2">
+                <Input value={f.imageUrl} onChange={(e) => setF({ ...f, imageUrl: e.target.value })} placeholder="https://… veya görsel yükle" />
+                <label className={`inline-flex h-9 shrink-0 items-center justify-center gap-1.5 rounded-[4px] border-2 border-dashed px-3 text-[0.8rem] font-medium ${imgUploading ? "cursor-wait border-line text-muted" : "cursor-pointer border-line text-ink-700 hover:border-accent hover:text-accent"}`}>
+                  <Icon.upload size={14} />
+                  {imgUploading ? "Yükleniyor…" : "Yükle"}
+                  <input
+                    type="file"
+                    accept="image/jpeg,image/png,image/webp"
+                    className="sr-only"
+                    disabled={imgUploading}
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      e.target.value = "";
+                      if (file) void uploadCampaignImage(file);
+                    }}
+                  />
+                </label>
+              </div>
+              {f.imageUrl ? <img src={f.imageUrl} alt="Kampanya görseli önizlemesi" className="mt-2 h-24 w-full rounded-[3px] border border-line object-cover" /> : null}
+            </Field>
             <div className="sm:col-span-2"><Checkbox checked={f.qrEnabled} onChange={(v) => setF({ ...f, qrEnabled: v })} label="Bu kampanya için QR kodu oluştur" /></div>
           </div>
         )}
@@ -782,12 +839,68 @@ function QrSection({ d, lang, post }: { d: BD; lang: Lang; post: (r: string, b: 
 
 /* --------------------------- VİDEO / İÇERİK STÜDYOSU --------------------------- */
 
+/** FAZ 11 — private bucket'daki video için imzalı URL ile oynatıcı. */
+function SignedVideo({ path }: { path: string }) {
+  const [url, setUrl] = useState<string | null>(null);
+  const [failed, setFailed] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    getBrowserSupabase()
+      .storage.from("business-video")
+      .createSignedUrl(path, 3600)
+      .then(({ data, error }) => {
+        if (!alive) return;
+        if (error) setFailed(true);
+        else setUrl(data.signedUrl);
+      })
+      .catch(() => { if (alive) setFailed(true); });
+    return () => { alive = false; };
+  }, [path]);
+  if (failed) return <p className="mt-2 text-[0.78rem] text-muted">Video bağlantısı alınamadı (yetki veya ağ hatası).</p>;
+  if (!url) return <p className="mt-2 text-[0.78rem] text-muted">Oynatıcı hazırlanıyor…</p>;
+  return <video src={url} controls preload="metadata" className="mt-2 w-full rounded-[3px] bg-black" />;
+}
+
 function StudioSection({ d, post, videos, lang }: { d: BD; post: (r: string, b: Record<string, unknown>, m: string) => Promise<unknown>; videos: StudioVideo[]; lang: Lang }) {
   const toast = useToast();
   const [busy, setBusy] = useState<string | null>(null);
   const [generated, setGenerated] = useState<{ title: string; scenes: { at: string; visual: string; caption: string }[] } | null>(null);
   const [focus, setFocus] = useState("");
   const [uploadName, setUploadName] = useState<string | null>(null);
+  const [uploading, setUploading] = useState(false);
+  const uploaded = videos.filter((v) => v.storagePath);
+
+  /** Yüklenen videoyu tarayıcıdan doğrudan private Storage'a gönderir (FAZ 11). */
+  async function uploadVideo(file: File) {
+    const MAX = 100 * 1024 * 1024;
+    const okTypes = ["video/mp4", "video/webm", "video/quicktime"];
+    if (!okTypes.includes(file.type)) {
+      toast.push({ title: "Geçersiz dosya türü", desc: "Yalnızca MP4, WebM veya MOV yüklenebilir.", tone: "danger" });
+      return;
+    }
+    if (file.size > MAX) {
+      toast.push({ title: "Dosya çok büyük", desc: "Video en fazla 100MB olabilir.", tone: "danger" });
+      return;
+    }
+    setUploading(true);
+    try {
+      const sb = getBrowserSupabase();
+      const ext = file.name.includes(".") ? (file.name.split(".").pop() || "mp4").toLowerCase() : "mp4";
+      const path = `${d.biz.id}/${crypto.randomUUID()}.${ext}`;
+      const { error } = await sb.storage.from("business-video").upload(path, file, { contentType: file.type, upsert: false });
+      if (error) {
+        toast.push({ title: "Yükleme başarısız", desc: error.message, tone: "danger" });
+        return;
+      }
+      setUploadName(file.name);
+      // Kayıt: video_assets (UPLOADED_EDIT) + hizmet talebi; sunucu yolu doğrular.
+      await post("/api/business", { action: "video_upload", storagePath: path, title: file.name.slice(0, 120) }, "Video yüklendi — düzenleme talebi oluşturuldu");
+    } catch {
+      toast.push({ title: "Yükleme başarısız", desc: "Ağ hatası oluştu; tekrar dene.", tone: "danger" });
+    } finally {
+      setUploading(false);
+    }
+  }
 
   const businessVideos = videos.filter((v) =>
     ["HOW_BUSINESS_CAMPAIGN_WORKS", "HOW_AI_PROGRAM_WORKS", "HOW_TO_READ_ANALYTICS", "HOW_QR_TRACKING_WORKS"].includes(v.topic)
@@ -896,23 +1009,21 @@ function StudioSection({ d, post, videos, lang }: { d: BD; post: (r: string, b: 
             <p className="font-display text-[1rem] font-bold">Yüklenen videoyu düzenle</p>
             <p className="mt-2 text-[0.86rem] leading-relaxed text-muted">
               Kendi videonu yükle; DampingVar ekibi kesim, altyazı ve marka uyumu düzenlemesini ücretli hizmet olarak
-              yapar. Bu ortamda dosya yükleme servisi (Storage) bağlı değildir; talep kaydı oluşturulur.
+              yapar. Dosyan güvenli biçimde Supabase Storage&apos;a yüklenir (en fazla 100MB); kayıt düzenleme talebi
+              olarak kaydedilir.
             </p>
-            <label className="mt-4 flex cursor-pointer items-center justify-center gap-2 border-2 border-dashed border-line bg-canvas px-4 py-6 text-[0.86rem] text-muted hover:border-accent hover:text-accent">
+            <label className={`mt-4 flex items-center justify-center gap-2 border-2 border-dashed bg-canvas px-4 py-6 text-[0.86rem] ${uploading ? "cursor-wait border-line text-muted" : "cursor-pointer border-line text-muted hover:border-accent hover:text-accent"}`}>
               <Icon.upload size={16} />
-              {uploadName ?? "Video dosyası seç (demo: yükleme yapılmaz)"}
+              {uploading ? "Yükleniyor…" : (uploadName ?? "Video dosyası seç (MP4, WebM veya MOV — en fazla 100MB)")}
               <input
                 type="file"
-                accept="video/*"
+                accept="video/mp4,video/webm,video/quicktime"
                 className="sr-only"
+                disabled={uploading}
                 onChange={(e) => {
                   const f = e.target.files?.[0];
-                  setUploadName(f ? f.name : null);
-                  toast.push({
-                    title: "Dosya seçildi",
-                    desc: f ? `${f.name} — yükleme servisi bağlı değil, yalnızca hizmet talebi kaydedilir.` : undefined,
-                    tone: "warning",
-                  });
+                  e.target.value = "";
+                  if (f) void uploadVideo(f);
                 }}
               />
             </label>
@@ -933,6 +1044,26 @@ function StudioSection({ d, post, videos, lang }: { d: BD; post: (r: string, b: 
               Düzenleme hizmeti talep et
             </Button>
           </Card>
+
+          {uploaded.length > 0 ? (
+            <Card padded={false}>
+              <p className="border-b-2 border-line px-4 py-3 font-display text-[1rem] font-bold">Yüklenen videolar</p>
+              <ul className="divide-y-2 divide-line-soft">
+                {uploaded.map((v) => (
+                  <li key={v.id} className="px-4 py-3">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="truncate text-[0.86rem] font-semibold text-ink">{v.title}</p>
+                        <p className="mt-0.5 text-[0.74rem] text-muted">Özel bucket · yalnızca izin verilen hesaplarda oynatılır</p>
+                      </div>
+                      <StatusBadge status={v.status} lang={lang} />
+                    </div>
+                    <SignedVideo path={v.storagePath!} />
+                  </li>
+                ))}
+              </ul>
+            </Card>
+          ) : null}
 
           <Card padded={false}>
             <p className="border-b-2 border-line px-4 py-3 font-display text-[1rem] font-bold">Üretilen içerikler</p>

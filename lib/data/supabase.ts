@@ -1310,6 +1310,7 @@ export async function listVideos(topic?: string) {
     captions: (v.captions as Record<string, string[]>) ?? {},
     steps: (v.steps as string[]) ?? [],
     poster: nul(v.poster),
+    storagePath: nul(v.storage_path),
     renderStatus: str(v.render_status),
     status: str(v.status),
   }));

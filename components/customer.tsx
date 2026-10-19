@@ -519,7 +519,7 @@ function ProfileSection({ user, lang, currency, onSaved }: { user: NonNullable<S
           <p className="text-[0.72rem] font-semibold uppercase tracking-[0.14em] text-muted">Hesap</p>
           <div className="mt-3 space-y-2 text-[0.86rem]">
             <p><span className="text-muted">E-posta:</span> <strong>{user.email}</strong></p>
-            <p><span className="text-muted">Rol:</span> <strong>Müşteri</strong></p>
+            <p><span className="text-muted">Rol:</span> <strong>{user.role === "ADMIN" ? "Yönetici" : user.role === "BUSINESS" ? "İşletme" : "Müşteri"}</strong></p>
             <p><span className="text-muted">Davet kodu:</span> <strong className="tabular">{user.referralCode}</strong></p>
           </div>
           <div className="mt-4"><Progress value={70} tone="positive" /><p className="mt-2 text-[0.78rem] text-muted">Profil tamamlama %70 — telefon ve konum ekleyerek kişiselleştirmeyi artır.</p></div>

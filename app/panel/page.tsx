@@ -37,10 +37,16 @@ export default async function PanelPage({
     businessId =
       (typeof sp.biz === "string" ? (all.find((b) => b.slug === sp.biz)?.id ?? null) : null) ?? all[0]?.id ?? null;
   }
-  if (!businessId) redirect(user.role === "ADMIN" ? "/admin" : "/hesabim");
+  if (!businessId && user.role !== "BUSINESS") redirect(user.role === "ADMIN" ? "/admin" : "/hesabim");
+  // BUSINESS + işletme bağlantısı yok: yönlendirme YAPILMAZ. /hesabim, middleware
+  // katmanında ROLE_HOME["business"]=/panel'e geri gönderir (lib/roles.ts) ve döngü
+  // oluşurdu. Panel içindeki !data bloğu (aşağıda) bu durumu terminal olarak gösterir.
 
   const range = [7, 14, 30].includes(Number(sp.gun)) ? Number(sp.gun) : 14;
-  const [data, videos] = await Promise.all([getBusinessData(businessId, range), listVideos()]);
+  const [data, videos] = await Promise.all([
+    businessId ? getBusinessData(businessId, range) : Promise.resolve(null),
+    listVideos(),
+  ]);
   if (!data) {
     // Çevrim engeli (FAZ 9 canlı testi): /giris'e yönlendirme girişli kullanıcıyı
     // yeniden /panel'e taşıyordu (ERR_TOO_MANY_REDIRECTS). Panel içinde dürüst

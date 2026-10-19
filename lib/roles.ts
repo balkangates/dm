@@ -34,7 +34,10 @@ export const ROLE_HOME: Record<Role, string> = {
 export const PROTECTED_ROUTES: ReadonlyArray<{ prefix: string; roles: readonly Role[] }> = [
   { prefix: "/admin", roles: ["admin"] },
   { prefix: "/panel", roles: ["business", "admin"] },
-  { prefix: "/hesabim", roles: ["customer"] },
+  // business de açık: /panel'de işletme bağlantısı olmayan BUSINESS hesabı
+  // /hesabim'e düşer; middleware onu ROLE_HOME["business"]=/panel'e geri
+  // gönderseydi ERR_TOO_MANY_REDIRECTS döngüsü oluşurdu (FAZ 9 canlı bulgusu).
+  { prefix: "/hesabim", roles: ["customer", "business"] },
 ];
 
 /** Oturum açmış kullanıcının görmemesi gereken sayfalar. */

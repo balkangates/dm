@@ -133,6 +133,12 @@ begin
   insert into public.business_staff (business_id, user_id, name, email, role, active)
   values (v_id, v_uid, coalesce(v_pname, p_name), coalesce(v_email, 'kayit@dampingvar.demo'), 'owner', true);
 
+  -- profiles_guard trigger'ını güvenilir kaynaktan geçir (yalnızca bu
+  -- security definer fonksiyon işaretleyebilir; PostgREST istemcisi
+  -- dv.* GUC'ını set edemez) — yoksa rol güncellemesi "yalnızca platform
+  -- yöneticisi" hatasıyla rollback olurdu.
+  perform set_config('dv.trusted_update', 'on', true);
+
   update public.profiles set role = 'business'
   where id = v_uid and role = 'customer';
 

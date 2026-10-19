@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   Badge, BarChart, Button, Card, Dialog, EmptyState, Field, Funnel, Icon, Input, Kpi, Notice, Pagination, QrPanel, Select,
   Table, Td, Th, Toggle, useToast,
@@ -39,6 +39,9 @@ export default function AdminDashboard({ data, lang, currency, section, affiliat
   const toast = useToast();
   const [confirm, setConfirm] = useState<null | { title: string; desc: string; run: () => Promise<void> }>(null);
   const [page, setPage] = useState(1);
+  // Onay diyaloğu section değişiminde kapanır (aksi halde yeni bölümde
+  // Askıdan/Geri al'ın üzerine biniyordu).
+  useEffect(() => setConfirm(null), [section]);
   const c = data.counts;
 
   async function act(body: Record<string, unknown>, ok: string) {

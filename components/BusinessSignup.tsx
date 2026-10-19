@@ -1,7 +1,6 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
 import { Button, Card, Field, Icon, Input, Notice, Textarea } from "@/components/ds";
 
 /** Yaygın kategoriler — serbest metin girişi için öneri listesi. */
@@ -31,15 +30,16 @@ type Form = {
 const EMPTY: Form = { name: "", category: "", district: "", city: "", address: "", phone: "", description: "" };
 
 /**
- * FAZ 10 — "İşletme Aç" öz-kayıt formu.
- * POST /api/business { action: "open" } → dv_business_signup RPC
- * (businesses + business_staff(owner) + profiles.role → business).
- * Başarıda /panel'e yönlendirir; hata Türkçe mesajla form içinde gösterilir.
+ * FAZ 10 (revize) — "İşletme Aç" talep formu (onay akışlı).
+ * POST /api/business { action: "open" } → dv_business_request RPC
+ * → bekleyen işletme talebi oluşur; admin panelde "Onayla" ile
+ * businesses + business_staff yazılır, rol business olur, paneli açılır.
+ * Hata Türkçe mesajla form içinde gösterilir.
  */
-export function BusinessSignupForm() {
-  const router = useRouter();
+export function BusinessSignupForm({ pending }: { pending?: { name: string; category: string; district: string } | null }) {
   const [f, setF] = useState<Form>(EMPTY);
   const [busy, setBusy] = useState(false);
+  const [done, setDone] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const set =
@@ -61,12 +61,12 @@ export function BusinessSignupForm() {
       });
       const json = await res.json().catch(() => ({}));
       if (!res.ok || json.ok !== true) {
-        setError(String(json.error || "İşletme açılamadı. Lütfen tekrar dene."));
+        setError(String(json.error || "İşletme talebi gönderilemedi. Lütfen tekrar dene."));
         setBusy(false);
         return;
       }
-      router.push("/panel");
-      router.refresh();
+      setDone(true);
+      setBusy(false);
     } catch {
       setError("Bağlantı hatası. Lütfen tekrar dene.");
       setBusy(false);
@@ -75,6 +75,17 @@ export function BusinessSignupForm() {
 
   return (
     <Card className="mt-6">
+      {pending ? (
+        <Notice tone="info" className="mb-4" icon={<Icon.info size={16} />}>
+          Bekleyen işletme talebin var: {pending.name} · {pending.category} · {pending.district}. Yönetici
+          onayladığında panelin açılır. Bilgileri değiştirirsen formu tekrar gönder, talep güncellenir.
+        </Notice>
+      ) : null}
+      {done ? (
+        <Notice tone="positive" className="mb-4" icon={<Icon.check size={16} />}>
+          Talebin yöneticiye iletildi. Onaylandığında hesabın işletme rolüne geçer ve panelin otomatik açılır.
+        </Notice>
+      ) : null}
       {error ? (
         <Notice tone="warning" className="mb-4" icon={<Icon.alert size={16} />}>
           {error}

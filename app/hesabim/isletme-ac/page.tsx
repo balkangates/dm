@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 import { getSessionUser } from "@/lib/authz";
 import { getLocale } from "@/lib/locale";
+import { createClient } from "@/lib/supabase/server";
 import { PublicShell, type SessionLite } from "@/components/Shell";
 import { Notice } from "@/components/ds";
 import { Icon } from "@/components/icons";
@@ -11,18 +12,36 @@ export const dynamic = "force-dynamic";
 export const metadata = { title: "İşletme Aç" };
 
 /**
- * FAZ 10 — İşletme öz-kayıdı sayfası.
+ * FAZ 10 (revize) — İşletme açma TALEBİ sayfası (onay akışlı).
  * Erişim: girişli kullanıcılar (middleware: /hesabim* → customer|business).
  * - Zaten bağlı işletmesi olan → /panel
  * - ADMIN → /admin
- * Formu dolduran müşteri, dv_business_signup ile işletme sahibi olur
- * ve rolü 'business' olur (RPC içinde) → başarıda /panel'e geçilir.
+ * Form gönderimi dv_business_request ile bekleyen talep açar; admin
+ * "Onayla" dediğinde dv_admin_approve_business işletme + sahip personel
+ * kaydını açar, rol business olur, kullanıcının paneli açılır.
  */
 export default async function OpenBusinessPage() {
   const user = await getSessionUser();
   if (!user) redirect("/giris?next=/hesabim/isletme-ac");
   if (user.role === "ADMIN") redirect("/admin");
   if (user.businessId) redirect("/panel");
+
+  // Bekleyen işletme talebi (varsa form üstünde durum bilgisi gösterilir)
+  const client = await createClient();
+  const { data: reqRow } = await client
+    .from("business_requests")
+    .select("payload, created_at")
+    .eq("user_id", user.id)
+    .eq("status", "pending")
+    .maybeSingle();
+  const payload = (reqRow?.payload ?? null) as Record<string, unknown> | null;
+  const pending = reqRow && payload
+    ? {
+        name: String(payload.name ?? ""),
+        category: String(payload.category ?? ""),
+        district: String(payload.district ?? ""),
+      }
+    : null;
 
   const locale = await getLocale();
   const session: SessionLite = {
@@ -44,10 +63,10 @@ export default async function OpenBusinessPage() {
           analitik araçlarına hemen eriş.
         </p>
         <Notice tone="info" className="mt-5" icon={<Icon.info size={16} />}>
-          Kayıt anında hesabın &quot;İşletme&quot; rolüne geçer ve panelin otomatik açılır. Bilgileri
-          daha sonra işletme panelinden güncelleyebilirsin.
+          Gönderdiğin talep yönetici onayına düşer. Onaylandığında hesabın &quot;İşletme&quot; rolüne
+          geçer, işletme kaydın açılır ve panelin otomatik olarak açılır.
         </Notice>
-        <BusinessSignupForm />
+        <BusinessSignupForm pending={pending} />
       </div>
     </PublicShell>
   );

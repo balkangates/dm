@@ -748,7 +748,7 @@ export async function getBusinessData(businessId: string, days = 14) {
 
 export async function getAdminData() {
   const client = await sb();
-  const [biz, profiles, camps, usages, refs, bonuses, policies, pkgs, feeRules, invs, ads, fraud, audit, aiSet, contents, events] =
+  const [biz, profiles, camps, usages, refs, bonuses, policies, pkgs, feeRules, invs, ads, fraud, audit, aiSet, contents, events, reqs] =
     await Promise.all([
       client.from("businesses").select("*").order("created_at", { ascending: false }),
       client.from("profiles").select("*").order("created_at", { ascending: false }),
@@ -766,6 +766,7 @@ export async function getAdminData() {
       client.from("ai_settings").select("*"),
       client.from("ai_contents").select("*").order("created_at", { ascending: false }).limit(20),
       client.from("analytics_events").select("*").limit(2000),
+      client.from("business_requests").select("*").eq("status", "pending"),
     ]);
 
   const bizRows = (biz.data ?? []) as Row[];
@@ -777,6 +778,7 @@ export async function getAdminData() {
   const invRows = (invs.data ?? []) as Row[];
   const fraudRows = (fraud.data ?? []) as Row[];
   const eventRows = (events.data ?? []) as Row[];
+  const reqRows = (reqs.data ?? []) as Row[];
   const evCount = (k: string) => eventRows.filter((e) => str(e.kind) === k).length;
 
   return {
@@ -835,6 +837,24 @@ export async function getAdminData() {
       createdAt: iso(u.created_at),
       usages: usageRows.filter((x) => str(x.customer_id) === str(u.id)).length,
     })),
+    // FAZ 10 — bekleyen "İşletme Aç" talepleri (userId → talep özeti)
+    pendingApprovals: Object.fromEntries(
+      reqRows.map((r) => {
+        const p = (r.payload ?? {}) as Row;
+        return [
+          str(r.user_id),
+          {
+            name: str(p.name ?? ""),
+            category: str(p.category ?? ""),
+            district: str(p.district ?? ""),
+            city: str(p.city ?? ""),
+            address: str(p.address ?? ""),
+            phone: nul(p.phone),
+            createdAt: iso(r.created_at),
+          },
+        ];
+      })
+    ),
     campaigns: campRows.map((c) => ({
       id: str(c.id),
       code: str(c.code),

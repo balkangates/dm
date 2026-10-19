@@ -105,9 +105,21 @@ export default function AdminDashboard({ data, lang, currency, section, affiliat
     return (
       <Wrap title="Müşteriler" desc="Kayıtlı müşteri hesapları ve etkinlik sayıları. Müşteri finansal bakiyesi tutulmaz.">
         <Table>
-          <thead><tr><Th>Ad</Th><Th>E-posta</Th><Th>Rol</Th><Th>Konum</Th><Th>Dil / Para</Th><Th>Davet kodu</Th><Th right>Etkinlik</Th></tr></thead>
-          <tbody>{rows.map((u) => (<tr key={u.id}><Td strong>{u.name}</Td><Td>{u.email}</Td><Td><Badge tone={u.role === "ADMIN" ? "accent" : u.role === "BUSINESS" ? "dark" : "neutral"}>{u.role}</Badge></Td>
-            <Td>{u.district ?? "—"} / {u.country}</Td><Td className="tabular">{u.lang} · {u.currency}</Td><Td className="tabular">{u.referralCode}</Td><Td right>{u.usages}</Td></tr>))}</tbody>
+          <thead><tr><Th>Ad</Th><Th>E-posta</Th><Th>Rol</Th><Th>İşletme talebi</Th><Th>Konum</Th><Th>Dil / Para</Th><Th>Davet kodu</Th><Th right>Etkinlik</Th></tr></thead>
+          <tbody>{rows.map((u) => {
+            const req = data.pendingApprovals[u.id];
+            return (
+              <tr key={u.id}><Td strong>{u.name}</Td><Td>{u.email}</Td><Td><Badge tone={u.role === "ADMIN" ? "accent" : u.role === "BUSINESS" ? "dark" : "neutral"}>{u.role}</Badge></Td>
+                <Td>{req ? (
+                  <span className="flex items-center gap-2">
+                    <Badge tone="warning">Bekliyor</Badge>
+                    <span className="text-[0.76rem] text-muted">{req.name} · {req.category} · {req.district}</span>
+                    <Button size="sm" onClick={() => void ask("İşletme onayı", `${u.name} → ${req.name}. Kullanıcının rolü business olur; işletme ve sahip personel kaydı açılır, paneli açılır.`, () => act({ action: "approve_business", user_id: u.id }, "İşletme onaylandı — panel açıldı"))}>Onayla</Button>
+                  </span>
+                ) : "-"}</Td>
+                <Td>{u.district ?? "-"} / {u.country}</Td><Td className="tabular">{u.lang} · {u.currency}</Td><Td className="tabular">{u.referralCode}</Td><Td right>{u.usages}</Td></tr>
+            );
+          })}</tbody>
         </Table>
         <Pagination page={safePage} pages={pages} onPage={setPage} />
       </Wrap>

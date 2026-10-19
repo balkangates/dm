@@ -85,18 +85,17 @@ export async function openBusinessAction(body: Row) {
   if (description.length > 400) throw new ActionError(400, "Açıklama en fazla 400 karakter olabilir.");
 
   const client = await sb();
-  const { data, error } = await client.rpc("dv_business_signup", {
+  const { data, error } = await client.rpc("dv_business_request", {
     p_name: name,
     p_category: category,
     p_district: district,
     p_city: city || "İstanbul",
     p_address: address,
-    p_slug: slugify(name),
     p_phone: phone || null,
     p_description: description || null,
   });
   if (error) fail(error);
-  return Response.json({ ok: true, business: data });
+  return Response.json({ ok: true, request: data });
 }
 
 export async function qrVerifyReject(
@@ -582,6 +581,16 @@ export async function adminAction(user: SessionUserLite, body: Row) {
   const id = String(body.id ?? "");
 
   switch (action) {
+    case "approve_business": {
+      // FAZ 10 — "İşletme Aç" talebi onayı: businesses + business_staff yazılır,
+      // rol customer→business, talep approved (dv_admin_approve_business).
+      const userId = String(body.user_id ?? "");
+      if (!userId) throw new ActionError(400, "Kullanıcı gerekli.");
+      const { data, error } = await client.rpc("dv_admin_approve_business", { p_user_id: userId });
+      if (error) fail(error);
+      await logAudit(user.email, "ADMIN", "BUSINESS_SIGNUP_APPROVED", "profiles", userId, data as Row);
+      return Response.json({ ok: true, business: data });
+    }
     case "campaign_moderate": {
       const decision = String(body.decision ?? "");
       if (!["APPROVED", "REJECTED", "PENDING"].includes(decision)) throw new ActionError(400, "Geçersiz karar.");

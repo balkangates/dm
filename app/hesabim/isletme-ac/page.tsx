@@ -2,7 +2,8 @@ import { redirect } from "next/navigation";
 import { getSessionUser } from "@/lib/authz";
 import { getLocale } from "@/lib/locale";
 import { PublicShell, type SessionLite } from "@/components/Shell";
-import { Icon, Notice } from "@/components/ds";
+import { Notice } from "@/components/ds";
+import { Icon } from "@/components/icons";
 import { BusinessSignupForm } from "@/components/BusinessSignup";
 
 export const dynamic = "force-dynamic";

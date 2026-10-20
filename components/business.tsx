@@ -7,6 +7,7 @@ import {
 } from "@/components/ds";
 import { DashSectionHead, StatusBadge, type NavItem } from "@/components/Dash";
 import { makeT } from "@/lib/i18n";
+import { CAMPAIGN_TEMPLATES, applyCampaignTemplate, type CampaignTemplate } from "@/lib/campaignTemplates";
 import { daysUntil, money, num, pct, shortDate, type Currency, type Lang } from "@/lib/money";
 import type { getBusinessData } from "@/lib/queries";
 import { getBrowserSupabase } from "@/lib/supabase/client";
@@ -37,6 +38,29 @@ const EMPTY = {
   minBasketCents: 0, currency: "TRY", startsAt: "", endsAt: "", timeStart: "", timeEnd: "",
   eligibleItems: "", exclusions: "", imageUrl: "", perCustomerLimit: 2, usageLimit: 500, qrEnabled: true,
 };
+
+/* İSTEK (a): işletme sahibi işletme profilini EKSİKSİZ doldurmalı.
+ * Zorunlu alanlar — istemci doğrulaması, eksiklik ölçer ve kampanya kapısı bu listeden türetilir;
+ * sunucu tarafında birebir karşılığı lib/data/supabase-actions.ts'tedir (requireCompleteProfile). */
+const PROFILE_REQUIRED = [
+  { key: "name", label: "İşletme adı" },
+  { key: "subCategory", label: "Alt kategori" },
+  { key: "phone", label: "Telefon" },
+  { key: "address", label: "Adres" },
+  { key: "description", label: "Kısa açıklama" },
+] as const;
+const PROFILE_OPTIONAL = [
+  { key: "whatsapp", label: "WhatsApp" },
+  { key: "instagram", label: "Instagram" },
+  { key: "website", label: "Web sitesi" },
+  { key: "story", label: "İşletme hikâyesi" },
+] as const;
+type ProfileFieldKey = (typeof PROFILE_REQUIRED)[number]["key"] | (typeof PROFILE_OPTIONAL)[number]["key"];
+type ProfileForm = Record<ProfileFieldKey, string>;
+/** Eksik ZORUNLU profil alanlarının etiketleri (kampanya kapısı bunu kullanır). */
+function profileMissingOf(vals: ProfileForm | Record<string, unknown>): string[] {
+  return PROFILE_REQUIRED.filter((r) => String((vals as Record<string, unknown>)[r.key] ?? "").trim().length < 2).map((r) => r.label);
+}
 
 export type StudioVideo = {
   id: string; topic: string; title: string; durationSec: number;
@@ -166,7 +190,11 @@ export default function BusinessDashboard({ data, lang, currency, section, video
   if (section === "profile") return <ProfileSection d={d} onPost={post} lang={lang} />;
 
   /* -------------------------------- CAMPAIGNS ----------------------------- */
-  if (section === "campaigns") return <CampaignsSection d={d} lang={lang} currency={currency} post={post} />;
+  if (section === "campaigns") {
+    // İSTEK (a): eksiksiz profil — kampanya oluşturma/yayınlama kapısı (sunucuda da zorlanır).
+    const profileMissing = profileMissingOf(d.biz as unknown as Record<string, unknown>);
+    return <CampaignsSection d={d} lang={lang} currency={currency} post={post} profileMissing={profileMissing} />;
+  }
 
   /* ------------------------------------ QR -------------------------------- */
   if (section === "qr") return <QrSection d={d} lang={lang} post={post} />;
@@ -335,25 +363,58 @@ export default function BusinessDashboard({ data, lang, currency, section, video
 /* ------------------------------ alt bölümler ------------------------------ */
 
 function ProfileSection({ d, onPost, lang }: { d: BD; onPost: (r: string, b: Record<string, unknown>, m: string) => Promise<unknown>; lang: Lang }) {
-  const [f, setF] = useState({
+  const [f, setF] = useState<ProfileForm>({
     name: d.biz.name, description: d.biz.description ?? "", story: d.biz.story ?? "", phone: d.biz.phone ?? "",
     whatsapp: d.biz.whatsapp ?? "", instagram: d.biz.instagram ?? "", website: d.biz.website ?? "", address: d.biz.address,
     subCategory: d.biz.subCategory ?? "",
   });
+  const [errors, setErrors] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
+  const toast = useToast();
+  // İSTEK (a): eksiksiz profil — canlı ölçer (tüm alanlar) + zorunlu alan doğrulaması.
+  const missingNow = profileMissingOf(f);
+  const filledAll = [...PROFILE_REQUIRED, ...PROFILE_OPTIONAL].filter((r) => String(f[r.key] ?? "").trim().length >= 2).length;
+  const pctComplete = Math.round((filledAll / (PROFILE_REQUIRED.length + PROFILE_OPTIONAL.length)) * 100);
   return (
     <div>
       <DashSectionHead eyebrow={t2(lang)} title="İşletme profili" desc="Bu bilgiler kamuya açık işletme sayfanda, aramada ve AI içerik üretiminde kullanılır." />
       <Card>
-        <form className="grid gap-4 md:grid-cols-2" onSubmit={async (e) => { e.preventDefault(); setBusy(true); await onPost("/api/business", { action: "profile", ...f }, "Profil güncellendi"); setBusy(false); }}>
-          <Field label="İşletme adı" required><Input value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} /></Field>
-          <Field label="Alt kategori"><Input value={f.subCategory} onChange={(e) => setF({ ...f, subCategory: e.target.value })} /></Field>
-          <Field label="Telefon"><Input value={f.phone} onChange={(e) => setF({ ...f, phone: e.target.value })} /></Field>
+        <div className="mb-5 rounded-[4px] border border-line bg-canvas px-4 py-3">
+          <div className="flex items-center justify-between text-[0.84rem]">
+            <span className="font-semibold text-ink">Profil tamamlama</span>
+            <span className="tabular font-bold text-accent-700">%{pctComplete}</span>
+          </div>
+          <div className="mt-2"><Progress value={pctComplete} /></div>
+          {missingNow.length ? (
+            <p className="mt-2 text-[0.78rem] leading-relaxed text-warning">
+              Eksik zorunlu alanlar: {missingNow.join(", ")}. Kampanya oluşturmak ve yayınlamak için profilinin eksiksiz olması gerekir.
+            </p>
+          ) : (
+            <p className="mt-2 text-[0.78rem] text-muted">Tüm zorunlu alanlar dolu. İsteğe bağlı alanları doldurmak profilini öne çıkarır.</p>
+          )}
+        </div>
+        <form className="grid gap-4 md:grid-cols-2" onSubmit={async (e) => {
+          e.preventDefault();
+          const errs: Record<string, string> = {};
+          for (const r of PROFILE_REQUIRED) if (String(f[r.key] ?? "").trim().length < 2) errs[r.key] = `${r.label} zorunludur.`;
+          if (Object.keys(errs).length) {
+            setErrors(errs);
+            toast.push({ title: "Profil eksiksiz", desc: `Zorunlu alanları doldur: ${Object.keys(errs).map((k) => PROFILE_REQUIRED.find((r) => r.key === k)?.label).join(", ")}.`, tone: "danger" });
+            return;
+          }
+          setErrors({});
+          setBusy(true);
+          await onPost("/api/business", { action: "profile", ...f }, "Profil güncellendi");
+          setBusy(false);
+        }}>
+          <Field label="İşletme adı" required error={errors.name}><Input value={f.name} invalid={!!errors.name} onChange={(e) => setF({ ...f, name: e.target.value })} /></Field>
+          <Field label="Alt kategori" required error={errors.subCategory} hint="Örn. Ev yemekleri, Kahve, Kuaför"><Input value={f.subCategory} invalid={!!errors.subCategory} onChange={(e) => setF({ ...f, subCategory: e.target.value })} /></Field>
+          <Field label="Telefon" required error={errors.phone}><Input value={f.phone} invalid={!!errors.phone} onChange={(e) => setF({ ...f, phone: e.target.value })} /></Field>
           <Field label="WhatsApp"><Input value={f.whatsapp} onChange={(e) => setF({ ...f, whatsapp: e.target.value })} /></Field>
           <Field label="Instagram"><Input value={f.instagram} onChange={(e) => setF({ ...f, instagram: e.target.value })} /></Field>
           <Field label="Web sitesi"><Input value={f.website} onChange={(e) => setF({ ...f, website: e.target.value })} /></Field>
-          <Field label="Adres" className="md:col-span-2"><Input value={f.address} onChange={(e) => setF({ ...f, address: e.target.value })} /></Field>
-          <Field label="Kısa açıklama" className="md:col-span-2"><Textarea rows={3} value={f.description} onChange={(e) => setF({ ...f, description: e.target.value })} /></Field>
+          <Field label="Adres" required error={errors.address} className="md:col-span-2"><Input value={f.address} invalid={!!errors.address} onChange={(e) => setF({ ...f, address: e.target.value })} /></Field>
+          <Field label="Kısa açıklama" required error={errors.description} className="md:col-span-2" hint="AI içerikleri bu açıklamaya ve ürün/hizmet bilgilerine göre uyarlanır."><Textarea rows={3} value={f.description} invalid={!!errors.description} onChange={(e) => setF({ ...f, description: e.target.value })} /></Field>
           <Field label="İşletme hikâyesi" className="md:col-span-2"><Textarea rows={3} value={f.story} onChange={(e) => setF({ ...f, story: e.target.value })} /></Field>
           <div className="md:col-span-2"><Button type="submit" loading={busy}>Değişiklikleri kaydet</Button></div>
         </form>
@@ -367,7 +428,7 @@ function ProfileSection({ d, onPost, lang }: { d: BD; onPost: (r: string, b: Rec
 }
 const t2 = (lang: Lang) => makeT(lang)("biz.profile");
 
-function CampaignsSection({ d, lang, currency, post }: { d: BD; lang: Lang; currency: Currency; post: (r: string, b: Record<string, unknown>, m: string) => Promise<unknown> }) {
+function CampaignsSection({ d, lang, currency, post, profileMissing }: { d: BD; lang: Lang; currency: Currency; post: (r: string, b: Record<string, unknown>, m: string) => Promise<unknown>; profileMissing: string[] }) {
   const [open, setOpen] = useState(false);
   const [preview, setPreview] = useState(false);
   const [confirm, setConfirm] = useState<null | { id: string; status: string; title: string }>(null);
@@ -376,16 +437,63 @@ function CampaignsSection({ d, lang, currency, post }: { d: BD; lang: Lang; curr
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
   const [tab, setTab] = useState("ALL");
+  const [tplKey, setTplKey] = useState("");
+  const [aiBusy, setAiBusy] = useState(false);
   const t = makeT(lang);
   const toast = useToast();
   const [imgUploading, setImgUploading] = useState(false);
 
-  function openNew() { setEditing(null); setF({ ...EMPTY, currency: d.biz.currency ?? currency }); setErrors({}); setPreview(false); setOpen(true); }
+  function openNew() {
+    // İSTEK (a): eksiksiz işletme profili olmadan yeni kampanya açılmaz (sunucuda da zorlanır).
+    if (profileMissing.length) {
+      toast.push({
+        title: "İşletme profili eksiksiz",
+        desc: `Eksik zorunlu alanlar: ${profileMissing.join(", ")}. Yeni kampanya oluşturmak için İşletme Profili'ni tamamla.`,
+        tone: "danger",
+      });
+      return;
+    }
+    setEditing(null); setF({ ...EMPTY, currency: d.biz.currency ?? currency }); setErrors({}); setPreview(false); setTplKey(""); setOpen(true);
+  }
   function openEdit(id: string) {
     const c = d.campaigns.find((x) => x.id === id); if (!c) return;
     setEditing(id);
-    setF({ ...EMPTY, title: c.title, description: c.description ?? "", terms: c.terms ?? "", type: c.type, discountPercent: c.discountPercent, discountAmountCents: c.discountAmountCents, minBasketCents: c.minBasketCents, currency: c.currency, startsAt: (c.startsAt ?? "").slice(0, 10), endsAt: (c.endsAt ?? "").slice(0, 10), timeStart: c.timeStart ?? "", timeEnd: c.timeEnd ?? "", eligibleItems: c.eligibleItems.join(", "), exclusions: c.exclusions.join(", "), imageUrl: c.imageUrl ?? "", perCustomerLimit: c.perCustomerLimit, usageLimit: c.usageLimit ?? 500, qrEnabled: c.qrEnabled });
-    setErrors({}); setPreview(false); setOpen(true);
+    // Not: para alanları formda BİRİM tutar olarak tutulur; kaydetmede ×100'e çevrilir.
+    setF({ ...EMPTY, title: c.title, description: c.description ?? "", terms: c.terms ?? "", type: c.type, discountPercent: c.discountPercent, discountAmountCents: c.discountAmountCents / 100, minBasketCents: c.minBasketCents / 100, currency: c.currency, startsAt: (c.startsAt ?? "").slice(0, 10), endsAt: (c.endsAt ?? "").slice(0, 10), timeStart: c.timeStart ?? "", timeEnd: c.timeEnd ?? "", eligibleItems: c.eligibleItems.join(", "), exclusions: c.exclusions.join(", "), imageUrl: c.imageUrl ?? "", perCustomerLimit: c.perCustomerLimit, usageLimit: c.usageLimit ?? 500, qrEnabled: c.qrEnabled });
+    setErrors({}); setPreview(false); setTplKey(""); setOpen(true);
+  }
+
+  /** İSTEK (b): hazır taslak örneği seçimi formu doldurur (yayın hâlâ işletme onaylı). */
+  function applyTpl(tpl: CampaignTemplate) {
+    setTplKey(tpl.key);
+    setF((prev) => ({ ...prev, ...applyCampaignTemplate(tpl) }));
+    setErrors({});
+  }
+
+  /** İSTEK (c): AI, işletme profili + ürün/hizmetlere göre uyarlanmış taslağı forma aktarır (POST /api/ai — yine taslak). */
+  async function aiAdapt() {
+    setAiBusy(true);
+    try {
+      const res = await fetch("/api/ai", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          action: "campaign",
+          goal: tplKey ? `Hazır taslağı işletmeime uyarla: ${CAMPAIGN_TEMPLATES.find((x) => x.key === tplKey)?.label ?? "genel kampanya"}` : "Yeni kampanya taslağı hazırla",
+        }),
+      });
+      const json = await res.json().catch(() => ({ ok: false }) as Record<string, unknown>);
+      if (json.ok && json.fields) {
+        setF((prev) => ({ ...prev, ...(json.fields as Partial<typeof EMPTY>) }));
+        setErrors({});
+        toast.push({ title: "AI taslağı forma aktarıldı", desc: "İşletme adın, ilçen, kategorin, ürün ve hizmetlerine göre uyarlandı; yayın öncesi gözden geçir.", tone: "positive" });
+      } else {
+        toast.push({ title: String(json.error ?? "AI üretimi başarısız"), tone: "danger" });
+      }
+    } catch {
+      toast.push({ title: "Ağ hatası oluştu", desc: "AI çağrısı tamamlanamadı; tekrar dene.", tone: "danger" });
+    }
+    setAiBusy(false);
   }
 
   /** Kampanya görselini tarayıcıdan doğrudan Supabase Storage'a yükler (FAZ 11). */
@@ -420,7 +528,7 @@ function CampaignsSection({ d, lang, currency, post }: { d: BD; lang: Lang; curr
     }
   }
 
-  function validate() {
+  function validate(publish: boolean) {
     const e: Record<string, string> = {};
     if (f.title.trim().length < 5) e.title = "Başlık en az 5 karakter olmalı.";
     if (f.description.trim().length < 10) e.description = "Açıklama en az 10 karakter olmalı.";
@@ -428,11 +536,13 @@ function CampaignsSection({ d, lang, currency, post }: { d: BD; lang: Lang; curr
     if (f.type === "PERCENT" && (f.discountPercent <= 0 || f.discountPercent > 70)) e.discountPercent = "%1–70 aralığında olmalı.";
     if ((f.type === "FIXED" || f.type === "PRODUCT") && f.discountAmountCents <= 0) e.discountAmountCents = "Sabit indirim 0'dan büyük olmalı.";
     if (f.endsAt && f.startsAt && new Date(f.endsAt) <= new Date(f.startsAt)) e.endsAt = "Bitiş, başlangıçtan sonra olmalı.";
+    // İSTEK (d): görsel olmadan yayınlama YOK (sunucuda da zorlanır).
+    if (publish && !f.imageUrl.trim()) e.imageUrl = "Yayınlamak için kampanya görseli gerekli. Görsel yükle veya bağlantısını gir.";
     setErrors(e); return Object.keys(e).length === 0;
   }
 
   async function save(publish: boolean) {
-    if (!validate()) return;
+    if (!validate(publish)) return;
     setBusy(true);
     await post("/api/campaigns", {
       action: "upsert", id: editing ?? undefined, publish, ...f,
@@ -449,6 +559,12 @@ function CampaignsSection({ d, lang, currency, post }: { d: BD; lang: Lang; curr
       <DashSectionHead eyebrow={t("biz.campaigns")} title="Kampanya yöneticisi"
         desc="Taslak / yayında / duraklatıldı / süresi doldu. Koşullar geçmiş kayıtları geriye dönük değiştirmez."
         action={<Button icon={<Icon.plus size={15} />} onClick={openNew}>Yeni kampanya</Button>} />
+
+      {profileMissing.length ? (
+        <Notice tone="warning" icon={<Icon.alert size={16} />} title="İşletme profili eksiksiz" className="mb-5">
+          Eksik zorunlu alanlar: {profileMissing.join(", ")} — yeni kampanya oluşturmak ve yayınlamak için İşletme Profili bölümünü tamamla.
+        </Notice>
+      ) : null}
 
       <div className="mb-5">
         <Tabs
@@ -497,7 +613,11 @@ function CampaignsSection({ d, lang, currency, post }: { d: BD; lang: Lang; curr
                 <Button size="sm" variant="ghost" href={`/kampanya/${c.slug ?? c.code}`}>Önizle</Button>
                 {c.status === "PUBLISHED"
                   ? <Button size="sm" variant="danger" onClick={() => setConfirm({ id: c.id, status: "PAUSED", title: c.title })}>{t("common.pause")}</Button>
-                  : <Button size="sm" onClick={() => setConfirm({ id: c.id, status: "PUBLISHED", title: c.title })}>{t("common.publish")}</Button>}
+                  : <Button size="sm" onClick={() => {
+                    // İSTEK (d): kart üzerinden yayınlama da görselsiz engellenir (sunucuda da zorlanır).
+                    if (!c.imageUrl) { toast.push({ title: "Görsel olmadan yayınlanamaz", desc: "Önce Düzenle ile kampanyaya görsel ekle.", tone: "danger" }); return; }
+                    setConfirm({ id: c.id, status: "PUBLISHED", title: c.title });
+                  }}>{t("common.publish")}</Button>}
               </div>
             </Card>
           );
@@ -512,6 +632,25 @@ function CampaignsSection({ d, lang, currency, post }: { d: BD; lang: Lang; curr
           <Button variant="dark" loading={busy} onClick={() => void save(false)}>Taslak kaydet</Button>
           <Button loading={busy} onClick={() => void save(true)} icon={<Icon.check size={15} />}>{t("common.publish")}</Button>
         </>}>
+        {!editing ? (
+          <div className="mb-4 rounded-[4px] border border-line bg-canvas px-4 py-3.5">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <p className="text-[0.72rem] font-semibold uppercase tracking-[0.14em] text-muted">Hazır taslak örnekleri</p>
+                <p className="mt-1 text-[0.78rem] leading-relaxed text-muted">Bir örnek seç, form doldurulsun; AI ile işletme adını, ilçeni, kategorini ve ürün/hizmetlerini içerecek şekilde uyarlayabilirsin.</p>
+              </div>
+              <Button size="sm" variant="secondary" icon={<Icon.spark size={14} />} loading={aiBusy} onClick={() => void aiAdapt()}>AI ile işletme profiline göre uyarla</Button>
+            </div>
+            <div className="mt-3">
+              <Select value={tplKey} onChange={(e) => { const tpl = CAMPAIGN_TEMPLATES.find((x) => x.key === e.target.value); if (tpl) applyTpl(tpl); }}>
+                <option value="">Taslak seç…</option>
+                {CAMPAIGN_TEMPLATES.map((tpl) => (<option key={tpl.key} value={tpl.key}>{tpl.label}</option>))}
+              </Select>
+            </div>
+            {tplKey ? <p className="mt-2 text-[0.78rem] text-muted">{CAMPAIGN_TEMPLATES.find((x) => x.key === tplKey)?.hint}</p> : null}
+            <p className="mt-2 text-[0.74rem] text-muted">Taslaklar örnek metinlerle gelir; yayınlamadan önce gözden geçir. Görsel eklemeden kampanya yayınlanamaz.</p>
+          </div>
+        ) : null}
         {preview ? (
           <Card className="border-accent/30 bg-accent-soft/30">
             <p className="text-[0.7rem] font-semibold uppercase tracking-[0.14em] text-accent-700">Müşterinin göreceği önizleme</p>
@@ -548,9 +687,9 @@ function CampaignsSection({ d, lang, currency, post }: { d: BD; lang: Lang; curr
             <Field label="Müşteri başına"><Input type="number" min={1} value={f.perCustomerLimit} onChange={(e) => setF({ ...f, perCustomerLimit: Number(e.target.value) })} /></Field>
             <Field label="Uygun ürün/hizmetler" hint="Virgülle ayır" className="sm:col-span-2"><Input value={f.eligibleItems} onChange={(e) => setF({ ...f, eligibleItems: e.target.value })} /></Field>
             <Field label="İstisnalar" hint="Virgülle ayır" className="sm:col-span-2"><Input value={f.exclusions} onChange={(e) => setF({ ...f, exclusions: e.target.value })} /></Field>
-            <Field label="Kampanya görseli" hint="JPG, PNG veya WebP — en fazla 5MB. Yüklenen görsel herkese açık bucket'ta saklanır; bağlantıyı elle de girebilirsin." className="sm:col-span-2">
+            <Field label="Kampanya görseli" error={errors.imageUrl} hint="JPG, PNG veya WebP — en fazla 5MB. Görsel olmadan yayın yapılamaz. Yüklenen görsel herkese açık bucket'ta saklanır; bağlantıyı elle de girebilirsin." className="sm:col-span-2">
               <div className="flex gap-2">
-                <Input value={f.imageUrl} onChange={(e) => setF({ ...f, imageUrl: e.target.value })} placeholder="https://… veya görsel yükle" />
+                <Input value={f.imageUrl} invalid={!!errors.imageUrl} onChange={(e) => setF({ ...f, imageUrl: e.target.value })} placeholder="https://… veya görsel yükle" />
                 <label className={`inline-flex h-9 shrink-0 items-center justify-center gap-1.5 rounded-[4px] border-2 border-dashed px-3 text-[0.8rem] font-medium ${imgUploading ? "cursor-wait border-line text-muted" : "cursor-pointer border-line text-ink-700 hover:border-accent hover:text-accent"}`}>
                   <Icon.upload size={14} />
                   {imgUploading ? "Yükleniyor…" : "Yükle"}

@@ -295,6 +295,28 @@ function clamp(n: unknown, min: number, max: number, fallback = 0) {
   return Math.max(min, Math.min(max, Math.round(v)));
 }
 
+/**
+ * İSTEK (a): işletme sahibi işletme profilini EKSİKSİZ doldurmalı.
+ * Zorunlu alanlar DB'de nullable → bu yardımcı kampanya OLUŞTURMA ve YAYINLAMA
+ * isteklerinde sunucu tarafında zorlar; eksik alan varsa 422 ile durur.
+ */
+async function requireCompleteProfile(client: Awaited<ReturnType<typeof sb>>, businessId: string): Promise<string[]> {
+  const { data: biz } = await client
+    .from("businesses")
+    .select("name, sub_category, phone, address, description")
+    .eq("id", businessId)
+    .maybeSingle();
+  if (!biz) return ["İşletme kaydı"];
+  const required: Array<[unknown, string]> = [
+    [biz.name, "İşletme adı"],
+    [biz.sub_category, "Alt kategori"],
+    [biz.phone, "Telefon"],
+    [biz.address, "Adres"],
+    [biz.description, "Kısa açıklama"],
+  ];
+  return required.filter(([v]) => String(v ?? "").trim().length < 2).map(([, label]) => label);
+}
+
 export async function campaignUpsert(actor: BusinessActorLite, body: Row) {
   const client = await sb();
   const action = String(body.action ?? "create");
@@ -306,6 +328,15 @@ export async function campaignUpsert(actor: BusinessActorLite, body: Row) {
     const { data: row } = await client.from("campaigns").select("*").eq("id", id).maybeSingle();
     if (!row) throw new ActionError(404, "Kampanya bulunamadı.");
     if (str(row.business_id) !== actor.businessId) throw new ActionError(403, "Bu kampanya size ait değil.");
+    if (status === "PUBLISHED") {
+      // İSTEK (d): görsel olmadan yayınlama YOK.
+      if (!String(row.image_url ?? "").trim())
+        throw new ActionError(422, "Görsel olmadan kampanya yayınlanamaz. Kampanyayı düzenleyip kampanya görseli ekle.");
+      // İSTEK (a): eksiksiz profil olmadan yayınlama YOK.
+      const missing = await requireCompleteProfile(client, actor.businessId);
+      if (missing.length)
+        throw new ActionError(422, `İşletme profili eksiksiz. Eksik zorunlu alanlar: ${missing.join(", ")}. İşletme Profili bölümünü tamamlayın.`);
+    }
     const { data: updated, error } = await client
       .from("campaigns")
       .update({ status })
@@ -371,10 +402,29 @@ export async function campaignUpsert(actor: BusinessActorLite, body: Row) {
   };
 
   const id = body.id ? String(body.id) : null;
+  let existing: Row | null = null;
   if (id) {
-    const { data: existing } = await client.from("campaigns").select("*").eq("id", id).maybeSingle();
-    if (!existing) throw new ActionError(404, "Kampanya bulunamadı.");
-    if (str(existing.business_id) !== actor.businessId) throw new ActionError(403, "Bu kampanya size ait değil.");
+    const { data: ex } = await client.from("campaigns").select("*").eq("id", id).maybeSingle();
+    if (!ex) throw new ActionError(404, "Kampanya bulunamadı.");
+    if (str(ex.business_id) !== actor.businessId) throw new ActionError(403, "Bu kampanya size ait değil.");
+    existing = ex as Row;
+  }
+
+  // İSTEK (d): görsel olmadan yayınlama YOK (istekte yeni görsel yoksa mevcut görsel korunur).
+  const effectiveImage =
+    values.image_url ?? (existing ? String(existing.image_url ?? "").slice(0, 400) : null);
+  values.image_url = effectiveImage;
+  const publishWanted = body.publish === true;
+  if (publishWanted && !effectiveImage)
+    throw new ActionError(422, "Görsel olmadan kampanya yayınlanamaz. Kampanya görseli yükleyip (bağlantı girip) tekrar yayınla.");
+  // İSTEK (a): eksiksiz işletme profili olmadan kampanya OLUŞTURMA ve YAYINLAMA YOK.
+  if (publishWanted || !id) {
+    const missing = await requireCompleteProfile(client, actor.businessId);
+    if (missing.length)
+      throw new ActionError(422, `İşletme profili eksiksiz. Eksik zorunlu alanlar: ${missing.join(", ")}. İşletme Profili bölümünü tamamlayın.`);
+  }
+
+  if (id && existing) {
     const { data: updated, error } = await client
       .from("campaigns")
       // Koşullar değiştiyse moderasyon yeniden gerekir.
@@ -441,6 +491,20 @@ export async function businessAction(actor: BusinessActorLite, body: Row) {
   const action = String(body.action ?? "profile");
 
   if (action === "profile") {
+    // İSTEK (a): işletme sahibi profilini EKSİKSİZ doldurmalı — zorunlu alanlar.
+    const profileErrors: Record<string, string> = {};
+    const requiredProfile: Array<[string, string]> = [
+      ["name", "İşletme adı"],
+      ["subCategory", "Alt kategori"],
+      ["phone", "Telefon"],
+      ["address", "Adres"],
+      ["description", "Kısa açıklama"],
+    ];
+    for (const [key, label] of requiredProfile) {
+      if (String(body[key] ?? "").trim().length < 2) profileErrors[key] = `${label} zorunludur.`;
+    }
+    if (Object.keys(profileErrors).length)
+      return Response.json({ ok: false, errors: profileErrors }, { status: 422 });
     const patch: Row = {};
     for (const key of EDITABLE) if (typeof body[key] === "string") patch[toSnake(key)] = String(body[key]).slice(0, 1500);
     if (!Object.keys(patch).length) throw new ActionError(400, "Güncellenecek alan yok.");

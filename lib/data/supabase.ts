@@ -499,7 +499,7 @@ export async function getBusinessData(businessId: string, days = 14) {
   const { data: biz } = await client.from("businesses").select("*").eq("id", businessId).maybeSingle();
   if (!biz) return null;
 
-  const [hours, camps, qr, usages, staff, ads, contents, plans, pkgs, invs, feeRules, bonusRows, events, labels, refTotal] =
+  const [hours, camps, qr, usages, staff, ads, contents, plans, pkgs, invs, feeRules, bonusRows, events, labels, refTotal, prods, svcs] =
     await Promise.all([
       client.from("business_hours").select("*").eq("business_id", businessId),
       client.from("campaigns").select("*").eq("business_id", businessId).order("created_at", { ascending: false }),
@@ -517,6 +517,9 @@ export async function getBusinessData(businessId: string, days = 14) {
       client.from("analytics_events").select("*").eq("business_id", businessId).limit(1000),
       client.rpc("dv_customer_labels", { p_business_id: businessId }),
       client.rpc("dv_referral_total_count"),
+      // AI içeriği işletme profili + ÜRÜN/HİZMET verisine göre uyarlanır (istek: c).
+      client.from("products").select("name, price_cents, discount_price_cents").eq("business_id", businessId).eq("active", true).limit(50),
+      client.from("business_services").select("name, price_cents").eq("business_id", businessId).eq("active", true).limit(50),
     ]);
 
   const planRow = ((plans.data ?? []) as Row[])[0] ?? null;
@@ -557,6 +560,13 @@ export async function getBusinessData(businessId: string, days = 14) {
 
   return {
     biz: mapBusiness(biz as Row),
+    // AI motorunun işletme profil/ürün/hizmetlere göre uyumlu içerik üretmesi için (istek c).
+    products: ((prods.data ?? []) as Row[]).map((p) => ({
+      name: str(p.name),
+      priceCents: n(p.price_cents),
+      discountPriceCents: p.discount_price_cents == null ? null : n(p.discount_price_cents),
+    })),
+    services: ((svcs.data ?? []) as Row[]).map((s) => ({ name: str(s.name), priceCents: n(s.price_cents) })),
     hours: ((hours.data ?? []) as Row[]).map(toHour).sort((a, b) => a.dayOfWeek - b.dayOfWeek),
     campaigns: campRows.map((c) => ({
       id: str(c.id),

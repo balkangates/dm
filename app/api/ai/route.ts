@@ -33,8 +33,9 @@ function buildSnapshot(data: NonNullable<Awaited<ReturnType<typeof getBusinessDa
     description: data.biz.description,
     rating: data.biz.rating,
     reviewCount: data.biz.reviewCount,
-    products: [],
-    services: [],
+    // ÜRÜN/HİZMET verisi artık snapshot'a dahil → AI içeriği işletme profiline göre uyarlanır (istek c).
+    products: data.products.map((p) => ({ name: p.name, priceCents: p.priceCents, discountPriceCents: p.discountPriceCents ?? null })),
+    services: data.services.map((s) => ({ name: s.name, priceCents: s.priceCents })),
     campaigns: data.campaigns.map((c) => ({
       title: c.title,
       type: c.type,
@@ -91,7 +92,22 @@ export async function POST(req: Request) {
         status: "DRAFT",
       });
       await logAudit(actor.email, actor.staffRole, "AI_CAMPAIGN_SUGGESTED", "ai_contents", String(row.id), { goal });
-      return Response.json({ ok: true, content: row, suggestion });
+      // İstek: AI, işletme profili + ürün/hizmet bilgilerine göre UYARLANMIŞ taslak hazırlar ve
+      // kampanya formuna aktarılabilir alanlar (fields) döner. Yayın yine işletme onayına bağlıdır.
+      const fields = {
+        title: suggestion.title,
+        description: suggestion.description,
+        terms: `${suggestion.audience} için geçerlidir. ${suggestion.timeStart ?? "10:00"}–${suggestion.timeEnd ?? "22:00"} arasında, QR doğrulaması sonrası kasada uygulanır. Minimum sepet ${Math.round(suggestion.minBasketCents / 100)} TL. Diğer kampanyalarla birleştirilemez; stoklarla sınırlıdır.`,
+        type: "PERCENT",
+        discountPercent: suggestion.discountPercent,
+        minBasketCents: Math.round(suggestion.minBasketCents / 100),
+        timeStart: suggestion.timeStart ?? "",
+        timeEnd: suggestion.timeEnd ?? "",
+        eligibleItems: [...snapshot.products.slice(0, 3).map((p) => p.name), ...snapshot.services.slice(0, 2).map((s) => s.name)]
+          .filter(Boolean)
+          .join(", "),
+      };
+      return Response.json({ ok: true, content: row, suggestion, fields });
     }
 
     if (action === "social" || action === "story") {

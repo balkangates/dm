@@ -11,6 +11,7 @@ import {
   weeklyReport,
   type BusinessSnapshot,
 } from "@/lib/ai";
+import { campaignFieldsFromSuggestion, growthAnalyse, type GrowthExtras, type ExistingRec } from "@/lib/growth";
 import { getBusinessData, logAudit } from "@/lib/queries";
 import {
   ActionError,
@@ -18,6 +19,11 @@ import {
   aiInsertContent,
   aiInsertPlan,
   aiSettingsOverview,
+  bizNotify,
+  growthAnswer,
+  growthInsertRec,
+  growthNotificationsRead,
+  growthTaskUpdate,
 } from "@/lib/data/supabase-actions";
 
 export const dynamic = "force-dynamic";
@@ -94,20 +100,8 @@ export async function POST(req: Request) {
       await logAudit(actor.email, actor.staffRole, "AI_CAMPAIGN_SUGGESTED", "ai_contents", String(row.id), { goal });
       // İstek: AI, işletme profili + ürün/hizmet bilgilerine göre UYARLANMIŞ taslak hazırlar ve
       // kampanya formuna aktarılabilir alanlar (fields) döner. Yayın yine işletme onayına bağlıdır.
-      const fields = {
-        title: suggestion.title,
-        description: suggestion.description,
-        terms: `${suggestion.audience} için geçerlidir. ${suggestion.timeStart ?? "10:00"}–${suggestion.timeEnd ?? "22:00"} arasında, QR doğrulaması sonrası kasada uygulanır. Minimum sepet ${Math.round(suggestion.minBasketCents / 100)} TL. Diğer kampanyalarla birleştirilemez; stoklarla sınırlıdır.`,
-        type: "PERCENT",
-        discountPercent: suggestion.discountPercent,
-        minBasketCents: Math.round(suggestion.minBasketCents / 100),
-        timeStart: suggestion.timeStart ?? "",
-        timeEnd: suggestion.timeEnd ?? "",
-        eligibleItems: [...snapshot.products.slice(0, 3).map((p) => p.name), ...snapshot.services.slice(0, 2).map((s) => s.name)]
-          .filter(Boolean)
-          .join(", "),
-      };
-      return Response.json({ ok: true, content: row, suggestion, fields });
+      // Alan sözleşmesi lib/growth.ts (Büyüme Asistanı) ile ORTAKTIR.
+      return Response.json({ ok: true, content: row, suggestion, fields: campaignFieldsFromSuggestion(suggestion, snapshot) });
     }
 
     if (action === "social" || action === "story") {
@@ -174,6 +168,46 @@ export async function POST(req: Request) {
       await logAudit(actor.email, actor.staffRole, "AI_PLAN_GENERATED", "marketing_plans", String(plan.id), { goal });
       return Response.json({ ok: true, plan, days: buildMarketingPlan(snapshot) });
     }
+
+    /* ---------------- AI BÜYÜME ASİSTANI (20.10.2026 isteği) ---------------- */
+    if (action === "growth") {
+      // Gerçek verilerle analiz → en fazla 3 öneri (PROPOSED). Otomatik kampanya/reklam YOK.
+      const extras: GrowthExtras = {
+        publishedCampaigns: data.campaigns.filter((c) => c.status === "PUBLISHED").length,
+        adRequests: data.ads.length,
+        contentsCount: data.contents.length,
+        videosCount: data.videosCount ?? 0,
+      };
+      const existing: ExistingRec[] = data.growth.map((g) => ({ title: g.title, status: g.status }));
+      const drafts = growthAnalyse(snapshot, extras, existing);
+      const inserted = [];
+      for (const d of drafts) {
+        try {
+          inserted.push(await growthInsertRec(actor, { ...d }));
+        } catch {
+          // DB unique index aynı açık öneriyi engelledi → atla (yinelenen öneri/görev yok).
+        }
+      }
+      if (inserted.length) {
+        await bizNotify(actor.userId, "CAMPAIGN", `${inserted.length} yeni büyüme önerisi hazır`, "AI Pazarlama bölümünde Evet/Hayır cevabını bekliyor.", "/panel?s=ai");
+      }
+      await logAudit(actor.email, actor.staffRole, "GROWTH_ANALYSED", "growth_recommendations", null, { count: inserted.length });
+      return Response.json({ ok: true, count: inserted.length, extras });
+    }
+
+    if (action === "growth_answer") {
+      const extras: GrowthExtras = {
+        publishedCampaigns: data.campaigns.filter((c) => c.status === "PUBLISHED").length,
+        adRequests: data.ads.length,
+        contentsCount: data.contents.length,
+        videosCount: data.videosCount ?? 0,
+      };
+      const existing: ExistingRec[] = data.growth.map((g) => ({ title: g.title, status: g.status }));
+      return await growthAnswer(actor, body, snapshot, extras, existing);
+    }
+
+    if (action === "growth_task_update") return await growthTaskUpdate(actor, body);
+    if (action === "growth_notifications") return await growthNotificationsRead(actor, body);
 
     if (action === "analyse") return Response.json({ ok: true, bullets: analysePerformance(snapshot) });
     if (action === "report") return Response.json({ ok: true, report: weeklyReport(snapshot) });

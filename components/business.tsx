@@ -93,6 +93,11 @@ export default function BusinessDashboard({ data, lang, currency, section, video
         <DashSectionHead eyebrow={t("biz.overview")} title={`${d.biz.name} — genel bakış`}
           desc="Yalnızca sistem tarafından toplanan olaylar gösterilir. Tıklama, QR okutma ve doğrulanmış kullanım ayrı metriklerdir."
           action={<Badge tone="warning">Demo verisi</Badge>} />
+        {d.notifications.some((n) => !n.read) ? (
+          <Notice tone="info" icon={<Icon.info size={16} />} className="mb-5">
+            {d.notifications.filter((n) => !n.read).length} okunmamış büyüme bildirimi var — AI Pazarlama bölümünden inceleyebilirsin.
+          </Notice>
+        ) : null}
         <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
           <Kpi label={t("kpi.impressions")} value={m.impressions} icon={<Icon.eye size={16} />} spark={m.views14} delta={4.2} />
           <Kpi label={t("kpi.clicks")} value={m.clicks} icon={<Icon.cursor size={16} />} spark={m.clicks14} delta={-1.8} />
@@ -253,7 +258,7 @@ export default function BusinessDashboard({ data, lang, currency, section, video
   if (section === "advertising") return <AdvertisingSection d={d} lang={lang} post={post} />;
 
   /* ------------------------------------ AI -------------------------------- */
-  if (section === "ai") return <AiSection d={d} post={post} />;
+  if (section === "ai") return <AiSection d={d} post={post} videos={videos} />;
 
   /* --------------------------------- GROWTH ------------------------------- */
   if (section === "growth") return <GrowthSection d={d} post={post} lang={lang} />;
@@ -496,6 +501,31 @@ function CampaignsSection({ d, lang, currency, post, profileMissing }: { d: BD; 
     setAiBusy(false);
   }
 
+  // AI Büyüme Asistanı — kabul edilmiş öneri sonrası forma otomatik aktarım (mevcut form kullanılır).
+  useEffect(() => {
+    const raw = sessionStorage.getItem("dv:growth:campaign");
+    if (!raw) return;
+    sessionStorage.removeItem("dv:growth:campaign");
+    try {
+      const parsed = JSON.parse(raw) as { fields?: Record<string, string | number> };
+      if (!parsed.fields) return;
+      if (profileMissing.length) {
+        toast.push({ title: "İşletme profili eksiksiz", desc: "AI taslağını uygulamak için önce İşletme Profili'ni tamamla.", tone: "danger" });
+        return;
+      }
+      setEditing(null);
+      setF((prev) => ({ ...prev, ...(parsed.fields as Partial<typeof EMPTY>) }));
+      setErrors({});
+      setPreview(false);
+      setTplKey("");
+      setOpen(true);
+      toast.push({ title: "AI taslağı forma aktarıldı", desc: "Gözden geçir; görsel eklemeden yayınlanamaz.", tone: "positive" });
+    } catch {
+      // bozuk veri — yoksay
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   /** Kampanya görselini tarayıcıdan doğrudan Supabase Storage'a yükler (FAZ 11). */
   async function uploadCampaignImage(file: File) {
     const MAX = 5 * 1024 * 1024;
@@ -729,9 +759,36 @@ function CampaignsSection({ d, lang, currency, post, profileMissing }: { d: BD; 
 
 function AdvertisingSection({ d, lang, post }: { d: BD; lang: Lang; post: (r: string, b: Record<string, unknown>, m: string) => Promise<unknown> }) {
   const [f, setF] = useState({ name: "", placement: "ANASAYFA", district: d.biz.district, budgetCents: 250000, endsAt: "" });
+  const [brief, setBrief] = useState("");
+  const toast = useToast();
   // Düzeltme: bu bölümün eyebrow'u yanlışlıkla profil anahtarını (biz.profile)
   // kullanıyordu; reklam bölümüne ait biz.advertising anahtarı TR/EN/KA'da mevcut.
   const t = makeT(lang);
+
+  // AI Büyüme Asistanı — kabul edilmiş öneri sonrası mevcut reklam formunu doldurma.
+  useEffect(() => {
+    const raw = sessionStorage.getItem("dv:growth:ad");
+    if (!raw) return;
+    sessionStorage.removeItem("dv:growth:ad");
+    try {
+      const parsed = JSON.parse(raw) as { draft?: { name?: string; placement?: string; district?: string; budgetCents?: number; endsAt?: string; brief?: string } };
+      const dr = parsed.draft;
+      if (!dr) return;
+      setF((prev) => ({
+        ...prev,
+        name: dr.name ?? prev.name,
+        placement: dr.placement ?? prev.placement,
+        district: dr.district ?? prev.district,
+        budgetCents: dr.budgetCents ?? prev.budgetCents,
+        endsAt: dr.endsAt ?? prev.endsAt,
+      }));
+      setBrief(dr.brief ?? "");
+      toast.push({ title: "AI taslağı reklam formuna aktarıldı", desc: "Bütçe ve tarihleri gözden geçir; talep yönetici onayından geçer.", tone: "positive" });
+    } catch {
+      // bozuk veri — yoksay
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   return (
     <div>
       <DashSectionHead eyebrow={t("biz.advertising")} title="Reklam ve görünürlük" desc="Kategori, şehir, ilçe ve tarih bazlı görünürlük satın al. Reklam talebi yönetici onayıyla yayına girer." />
@@ -743,6 +800,7 @@ function AdvertisingSection({ d, lang, post }: { d: BD; lang: Lang; post: (r: st
                 <div><p className="font-display text-[1.02rem] font-bold">{a.name}</p><p className="mt-1 text-[0.8rem] text-muted">{a.placement} · {a.district ?? "—"} · bütçe {money(a.budgetCents, a.currency as Currency, lang)}</p></div>
                 <StatusBadge status={a.status} lang={lang} />
               </div>
+              {a.brief ? <pre className="mt-2 whitespace-pre-wrap rounded-[3px] bg-canvas p-2.5 font-sans text-[0.78rem] leading-relaxed text-muted">{a.brief}</pre> : null}
               <div className="mt-3 grid grid-cols-3 gap-3 border-t border-line-soft pt-3 text-center">
                 {[["Gösterim", num(a.impressions, lang)], ["Tıklama", num(a.clicks, lang)], ["CTR", pct(a.impressions ? a.clicks / a.impressions : 0, 2)]].map(([l, v]) => (
                   <div key={l}><p className="tabular text-[1.1rem] font-semibold">{v}</p><p className="text-[0.7rem] uppercase tracking-[0.1em] text-muted">{l}</p></div>
@@ -754,13 +812,16 @@ function AdvertisingSection({ d, lang, post }: { d: BD; lang: Lang; post: (r: st
         </div>
         <Card>
           <p className="font-display text-[1rem] font-bold">Yeni reklam talebi</p>
-          <form className="mt-4 grid gap-4" onSubmit={async (e) => { e.preventDefault(); await post("/api/business", { action: "ad_request", ...f }, "Reklam talebi oluşturuldu (onay bekliyor)"); }}>
+          <form className="mt-4 grid gap-4" onSubmit={async (e) => { e.preventDefault(); await post("/api/business", { action: "ad_request", ...f, brief: brief.trim() || undefined }, "Reklam talebi oluşturuldu (onay bekliyor)"); }}>
             <Field label="Reklam adı"><Input value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} placeholder="Kadıköy akşam görünürlüğü" /></Field>
             <Field label="Yerleşim"><Select value={f.placement} onChange={(e) => setF({ ...f, placement: e.target.value })}>
               {["ANASAYFA", "KATEGORI", "BOLGE", "KAMPANYA", "ARAMA"].map((v) => <option key={v} value={v}>{v}</option>)}</Select></Field>
             <Field label="İlçe"><Input value={f.district} onChange={(e) => setF({ ...f, district: e.target.value })} /></Field>
             <Field label="Bütçe (birim)"><Input type="number" min={0} value={f.budgetCents / 100} onChange={(e) => setF({ ...f, budgetCents: Math.round(Number(e.target.value) * 100) })} /></Field>
             <Field label="Bitiş"><Input type="date" value={f.endsAt} onChange={(e) => setF({ ...f, endsAt: e.target.value })} /></Field>
+            <Field label="Reklam metni ve hedefleme brief'i" hint="İsteğe bağlı — AI Büyüme Asistanı taslağı otomatik doldurur (amaç, hedef kitle, metin, görsel ihtiyacı)." className="sm:col-span-2">
+              <Textarea rows={4} value={brief} onChange={(e) => setBrief(e.target.value)} />
+            </Field>
             <Button type="submit">Talebi gönder</Button>
           </form>
           <Notice tone="warning" className="mt-4" icon={<Icon.alert size={16} />}>
@@ -772,7 +833,240 @@ function AdvertisingSection({ d, lang, post }: { d: BD; lang: Lang; post: (r: st
   );
 }
 
-function AiSection({ d, post }: { d: BD; post: (r: string, b: Record<string, unknown>, m: string) => Promise<unknown> }) {
+/* ------------------- AI BÜYÜME ASİSTANI (20.10.2026 isteği) ------------------ */
+
+const AREA_TR: Record<string, string> = { GROWTH: "Büyüme", VISIBILITY: "Görünürlük", ACQUISITION: "Müşteri kazanımı", SALES: "Satış" };
+const TASK_STATUS_TR: Record<string, string> = {
+  NEW: "Yeni", IN_PROGRESS: "Devam ediyor", WAITING_OWNER: "Bilgi/onay bekleniyor",
+  WAITING_APPROVAL: "Onay bekliyor", WAITING_PUBLISH: "Yayın bekliyor", DONE: "Tamamlandı", CANCELLED: "İptal edildi",
+};
+type GTask = { step?: number; title?: string; status?: string; owner?: string; due?: string | null; sourceTable?: string | null; sourceId?: string | null };
+type GPlan = { kind?: string; aiAction?: string; goal?: string; fields?: Record<string, string | number>; draft?: { name?: string; placement?: string; district?: string; budgetCents?: number; endsAt?: string; brief?: string } };
+
+/**
+ * Büyüme Asistanı — AI Pazarlama bölümünün içindedir (ayrı panel DEĞİL).
+ * Akış: analiz → en fazla 3 öneri kartı (Evet/Hayır) → görev listesi →
+ * mevcut formları doldurma (kampanya/reklam) → mevcut AI araçlarını
+ * yönlendirme → medya kontrol listesi → mevcut notifications bildirimleri.
+ * Hiçbir öneri otomatik yayın YAPMAZ; tümü işletme onaylıdır.
+ */
+function GrowthAssistant({ d, post, videos }: { d: BD; post: (r: string, b: Record<string, unknown>, m: string) => Promise<unknown>; videos: StudioVideo[] }) {
+  const [analysing, setAnalysing] = useState(false);
+  const [answering, setAnswering] = useState<string | null>(null);
+  const [rejecting, setRejecting] = useState<string | null>(null);
+  const [reason, setReason] = useState("");
+  const toast = useToast();
+
+  const proposed = d.growth.filter((r) => r.status === "PROPOSED");
+  const accepted = d.growth.filter((r) => r.status === "ACCEPTED" || r.status === "COMPLETED");
+  const rejectedList = d.growth.filter((r) => r.status === "REJECTED");
+  const unread = d.notifications.filter((n) => !n.read);
+
+  async function answer(rec: (typeof d.growth)[number], yes: boolean) {
+    setAnswering(rec.id);
+    try {
+      const res = await fetch("/api/ai", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ action: "growth_answer", id: rec.id, answer: yes ? "yes" : "no", reason: yes ? undefined : reason || undefined }),
+      });
+      const json = await res.json().catch(() => ({ ok: false }) as Record<string, unknown>);
+      if (!json.ok) {
+        toast.push({ title: String(json.error ?? "İşlem başarısız"), tone: "danger" });
+        setAnswering(null);
+        return;
+      }
+      const plan = rec.plan as GPlan;
+      if (yes && plan?.kind === "campaign" && plan.fields) {
+        toast.push({ title: "Görevler oluşturuldu — kampanya formu doldurulacak", tone: "positive" });
+        sessionStorage.setItem("dv:growth:campaign", JSON.stringify({ fields: plan.fields }));
+        window.location.href = "/panel?s=campaigns";
+        return;
+      }
+      if (yes && plan?.kind === "ad" && plan.draft) {
+        toast.push({ title: "Görevler oluşturuldu — reklam formu doldurulacak", tone: "positive" });
+        sessionStorage.setItem("dv:growth:ad", JSON.stringify({ draft: plan.draft }));
+        window.location.href = "/panel?s=advertising";
+        return;
+      }
+      toast.push({ title: yes ? "Öneri kabul edildi — görevler oluşturuldu" : "Ret kaydedildi", tone: "positive" });
+      window.location.reload();
+    } catch {
+      toast.push({ title: "Ağ hatası oluştu", tone: "danger" });
+      setAnswering(null);
+    }
+    setRejecting(null);
+    setReason("");
+  }
+
+  function checklistFor(rec: (typeof d.growth)[number]) {
+    const plan = rec.plan as GPlan;
+    const needsImage = plan?.kind === "campaign" || plan?.kind === "ad";
+    const hasProductImages = d.products.some((p) => p.imageUrl);
+    const hasBranding = Boolean(d.biz.logoText || (d.biz.description ?? "").trim());
+    const approvedContents = d.contents.filter((c) => c.status === "APPROVED").length;
+    const items: Array<{ label: string; ok: boolean | null; hint: string }> = [
+      { label: "Kampanya veya reklam görseli gerekli mi?", ok: needsImage ? null : true, hint: needsImage ? "Evet — görsel olmadan kampanya/reklam yayına girmez." : "Bu öneri için görsel zorunlu değil." },
+      d.products.length
+        ? { label: "Ürün fotoğrafı yüklendi mi?", ok: hasProductImages, hint: hasProductImages ? "En az bir ürün fotoğrafı var." : "Ürün fotoğrafı yok — dönüşüm için güçlü önerilir." }
+        : { label: "Ürün fotoğrafı yüklendi mi?", ok: null, hint: "Ürün listesi yok; önce listeyi tamamla." },
+      { label: "Video yüklendi mi?", ok: videos.length > 0 || d.videosCount > 0, hint: videos.length || d.videosCount ? "Video var (stüdyo)." : "Video yok — senaryo hazır, telefon çekimini stüdyoya yükleyebilirsin." },
+      { label: "Logo ve işletme bilgileri yeterli mi?", ok: hasBranding, hint: hasBranding ? "Profil bilgileri yeterli." : "Profil açıklaması eksik." },
+      { label: "İçerik önizlemesi onaylandı mı?", ok: approvedContents > 0, hint: approvedContents > 0 ? `${approvedContents} onaylı içerik var.` : "AI Pazarlama listesinden taslakları onayla." },
+    ];
+    return items;
+  }
+
+  return (
+    <div className="mb-6">
+      <Card>
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <p className="font-display text-[1.1rem] font-bold">Büyüme Asistanı</p>
+            <p className="mt-1 max-w-[70ch] text-[0.85rem] leading-relaxed text-muted">
+              İşletme verilerin (profil, ürünler, görüntülenme, QR, kampanyalar) analiz edilir; en fazla 3 öncelikli öneri sunulur.
+              Öneriler yalnızca taslaktır — kampanya, reklam ve içerik yalnızca sen onaylarsan oluşur. Satış artışı garanti edilmez.
+            </p>
+          </div>
+          <Button icon={<Icon.spark size={15} />} loading={analysing} onClick={async () => { setAnalysing(true); await post("/api/ai", { action: "growth" }, "Analiz tamamlandı — öneriler hazır"); setAnalysing(false); }}>
+            İşletmemi analiz et
+          </Button>
+        </div>
+      </Card>
+
+      {proposed.length ? (
+        <div className="mt-4 grid gap-4 xl:grid-cols-3">
+          {proposed.map((rec) => (
+            <Card key={rec.id}>
+              <div className="flex flex-wrap items-center gap-2">
+                <Badge tone="accent">{AREA_TR[rec.area] ?? rec.area}</Badge>
+                {rec.alternativeFor ? <Badge tone="neutral">Alternatif</Badge> : null}
+                {answering === rec.id ? <Badge tone="warning">İşleniyor…</Badge> : null}
+              </div>
+              <p className="mt-2 font-display text-[1.02rem] font-bold leading-snug">{rec.title}</p>
+              <dl className="mt-3 space-y-2 text-[0.82rem] leading-relaxed">
+                {([["Sorun / fırsat", rec.problem], ["Neden önerildi", rec.why], ["Beklenen fayda", rec.benefit], ["Bütçe / maliyet", rec.cost], ["İstenen materyaller", rec.materials]] as Array<[string, string]>).map(([k, v]) => (
+                  <div key={k}><dt className="text-[0.7rem] font-semibold uppercase tracking-[0.1em] text-muted">{k}</dt><dd className="text-ink-700">{v}</dd></div>
+                ))}
+              </dl>
+              <p className="mt-3 text-[0.7rem] font-semibold uppercase tracking-[0.1em] text-muted">Uygulanacak adımlar</p>
+              <ol className="mt-1 list-decimal space-y-1 pl-4 text-[0.8rem] text-ink-700">
+                {rec.steps.map((s, i) => <li key={i}>{s}</li>)}
+              </ol>
+              <div className="mt-4 flex flex-wrap gap-2">
+                <Button size="sm" icon={<Icon.check size={14} />} loading={answering === rec.id} onClick={() => void answer(rec, true)}>Evet, uygula</Button>
+                <Button size="sm" variant="secondary" disabled={answering === rec.id} onClick={() => { setRejecting(rejecting === rec.id ? null : rec.id); setReason(""); }}>Hayır, geç</Button>
+              </div>
+              {rejecting === rec.id ? (
+                <div className="mt-3 rounded-[4px] border border-line bg-canvas p-3">
+                  <Field label="Reddetme nedeni (isteğe bağlı)" hint="AI bu nedeni dikkate alır; aynı öneri bir daha sunulmaz, alternatif önerilir.">
+                    <Textarea rows={2} value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Örn. bütçem yok, bu sezon istemiyorum…" />
+                  </Field>
+                  <div className="mt-2 flex gap-2">
+                    <Button size="sm" variant="danger" loading={answering === rec.id} onClick={() => void answer(rec, false)}>Reddi gönder</Button>
+                    <Button size="sm" variant="ghost" onClick={() => setRejecting(null)}>Vazgeç</Button>
+                  </div>
+                </div>
+              ) : null}
+            </Card>
+          ))}
+        </div>
+      ) : (
+        <Notice tone="info" className="mt-4" icon={<Icon.info size={16} />}>
+          Bekleyen öneri yok. Yeni öneriler için &quot;İşletmemi analiz et&quot;e bas — verilerin değiştiğinde motor yeni fırsatlar sunar.
+        </Notice>
+      )}
+
+      {accepted.length ? (
+        <div className="mt-4 space-y-4">
+          {accepted.map((rec) => {
+            const tasks = (rec.tasks as GTask[]) ?? [];
+            const doneCount = tasks.filter((t) => t.status === "DONE" || t.status === "CANCELLED").length;
+            const plan = rec.plan as GPlan;
+            return (
+              <Card key={rec.id}>
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Badge tone={rec.status === "COMPLETED" ? "neutral" : "accent"}>{AREA_TR[rec.area] ?? rec.area}</Badge>
+                    <p className="font-display text-[1rem] font-bold">{rec.title}</p>
+                  </div>
+                  <span className="text-[0.8rem] text-muted">Görevler: <strong className="tabular text-ink">{doneCount}/{tasks.length}</strong></span>
+                </div>
+                <div className="mt-2"><Progress value={tasks.length ? (doneCount / tasks.length) * 100 : 0} /></div>
+                <div className="mt-3 grid gap-4 lg:grid-cols-2">
+                  <div>
+                    <p className="text-[0.7rem] font-semibold uppercase tracking-[0.1em] text-muted">Görev listesi</p>
+                    <ul className="mt-2 space-y-1.5">
+                      {tasks.map((t) => (
+                        <li key={t.step} className="flex flex-wrap items-center gap-2 border-b border-line-soft pb-1.5 text-[0.82rem] last:border-0">
+                          <span className="tabular w-5 shrink-0 text-muted">{t.step}.</span>
+                          <span className="min-w-0 flex-1 text-ink-700">{t.title}</span>
+                          <Badge tone={t.status === "DONE" ? "neutral" : t.status === "CANCELLED" ? "neutral" : "warning"}>{TASK_STATUS_TR[String(t.status)] ?? t.status}</Badge>
+                          {t.status !== "DONE" && t.status !== "CANCELLED" ? (
+                            <Button size="sm" variant="ghost" onClick={() => void post("/api/ai", { action: "growth_task_update", id: rec.id, step: t.step, status: "DONE" }, "Görev tamamlandı")}>Tamamlandı</Button>
+                          ) : null}
+                        </li>
+                      ))}
+                    </ul>
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      {plan?.kind === "campaign" ? <Button size="sm" variant="secondary" icon={<Icon.tag size={14} />} onClick={() => { window.location.href = "/panel?s=campaigns"; }}>Kampanya bölümüne git</Button> : null}
+                      {plan?.kind === "ad" ? <Button size="sm" variant="secondary" icon={<Icon.megaphone size={14} />} onClick={() => { window.location.href = "/panel?s=advertising"; }}>Reklam bölümüne git</Button> : null}
+                      <Button size="sm" variant="ghost" icon={<Icon.video size={14} />} onClick={() => { window.location.href = "/panel?s=studio"; }}>Video stüdyosu</Button>
+                    </div>
+                  </div>
+                  <div>
+                    <p className="text-[0.7rem] font-semibold uppercase tracking-[0.1em] text-muted">Materyal kontrol listesi</p>
+                    <ul className="mt-2 space-y-1.5">
+                      {checklistFor(rec).map((c) => (
+                        <li key={c.label} className="flex items-start gap-2 text-[0.82rem]">
+                          <span className={c.ok === true ? "text-[#0e9f6e]" : c.ok === false ? "text-warning" : "text-muted"}>{c.ok === true ? "✓" : c.ok === false ? "✗" : "—"}</span>
+                          <span><span className="text-ink-700">{c.label}</span> <span className="text-muted">{c.hint}</span></span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                </div>
+              </Card>
+            );
+          })}
+        </div>
+      ) : null}
+
+      {rejectedList.length ? (
+        <Card className="mt-4">
+          <p className="text-[0.7rem] font-semibold uppercase tracking-[0.1em] text-muted">Reddedilen öneriler (tekrar sunulmaz)</p>
+          <ul className="mt-2 space-y-1 text-[0.82rem]">
+            {rejectedList.slice(0, 6).map((r) => (
+              <li key={r.id} className="text-muted">— <span className="text-ink-700">{r.title}</span>{r.rejectedReason ? ` · neden: ${r.rejectedReason}` : ""}</li>
+            ))}
+          </ul>
+        </Card>
+      ) : null}
+
+      <Card className="mt-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <p className="text-[0.7rem] font-semibold uppercase tracking-[0.1em] text-muted">Bildirimler{unread.length ? ` · ${unread.length} okunmamış` : ""}</p>
+          {unread.length ? (
+            <Button size="sm" variant="ghost" onClick={() => void post("/api/ai", { action: "growth_notifications", read: "all" }, "Tümü okundu işaretlendi")}>Tümünü okundu işaretle</Button>
+          ) : null}
+        </div>
+        <ul className="mt-2 space-y-1.5">
+          {d.notifications.slice(0, 8).map((n) => (
+            <li key={n.id} className={`flex flex-wrap items-center gap-2 border-b border-line-soft pb-1.5 text-[0.82rem] last:border-0 ${n.read ? "" : "font-semibold"}`}>
+              <span className="text-ink-700">{n.title}</span>
+              {n.body ? <span className="text-muted">{n.body}</span> : null}
+              {!n.read ? <Badge tone="accent">yeni</Badge> : null}
+              {n.link ? <Button size="sm" variant="ghost" onClick={() => { window.location.href = String(n.link); }}>Git</Button> : null}
+            </li>
+          ))}
+          {!d.notifications.length ? <li className="py-2 text-[0.84rem] text-muted">Henüz bildirim yok.</li> : null}
+        </ul>
+      </Card>
+    </div>
+  );
+}
+
+function AiSection({ d, post, videos }: { d: BD; post: (r: string, b: Record<string, unknown>, m: string) => Promise<unknown>; videos: StudioVideo[] }) {
   const [goal, setGoal] = useState("Bu hafta müşteri sayısını artırmak istiyorum.");
   const [busy, setBusy] = useState<string | null>(null);
   const actions = [
@@ -787,6 +1081,7 @@ function AiSection({ d, post }: { d: BD; post: (r: string, b: Record<string, unk
     <div>
       <DashSectionHead eyebrow="AI Pazarlama" title="Bugün işletmen için ne üretelim?"
         desc="AI yalnızca taslak üretir. Onaylamadan hiçbir içerik yayınlanmaz, ücretli reklam başlamaz ve kampanya koşulu değişmez." />
+      <GrowthAssistant d={d} post={post} videos={videos} />
       <Card className="mb-6">
         <Field label="Hedefin"><Input value={goal} onChange={(e) => setGoal(e.target.value)} /></Field>
         <div className="mt-4 grid gap-2 sm:grid-cols-2 xl:grid-cols-3">

@@ -11,6 +11,8 @@ import { createClient } from "@/lib/supabase/server";
 import { trackEvent, logAudit } from "@/lib/queries";
 import { slugify } from "@/lib/money";
 import { getSessionUser, type BusinessActorLite, type SessionUserLite } from "@/lib/authz";
+import { generateAdVariants, generateSocial, generateStory, generateVideoScript, type BusinessSnapshot } from "@/lib/ai";
+import { growthAlternative, growthTaskTemplate, type ExistingRec, type GrowthExtras, type GrowthPlan } from "@/lib/growth";
 
 type Row = Record<string, unknown>;
 
@@ -656,6 +658,8 @@ export async function businessAction(actor: BusinessActorLite, body: Row) {
         district: String(body.district ?? "").slice(0, 80) || null,
         category: String(body.category ?? "").slice(0, 80) || null,
         budget_cents: Math.max(0, Math.min(100_000_000, Math.round(Number(body.budgetCents ?? 0)))),
+        // AI Büyüme Asistanı brief'i (isteğe bağlı; migration 0010 ile eklenen alan).
+        brief: body.brief ? String(body.brief).slice(0, 2000) : null,
         // Reklam, yönetici onayı olmadan yayına girmez.
         status: "PENDING_APPROVAL",
         starts_at: body.startsAt ? new Date(String(body.startsAt)).toISOString() : new Date().toISOString(),
@@ -1055,6 +1059,236 @@ export async function aiInsertPlan(actor: BusinessActorLite, values: Row, days: 
     if (daysError) fail(daysError);
   }
   return cam(plan as Row) as Row;
+}
+
+/* ================================================================== *
+ * AI BÜYÜME ASİSTANI (20.10.2026 isteği) — /api/ai içinde çağrılır.
+ *  * Öneri yalnızca PROPOSED'dır; hiçbir öneri otomatik kampanya/reklam
+ *    YARATMAZ. Yalnızca sahibin "Evet" cevabı görev oluşturur.
+ *  * "Hayır" ret nedeniyle kaydedilir; aynı başlık BİR DAHA sunulmaz,
+ *    alternatif öneri üretilir.
+ *  * Bildirimler MEVCUT notifications altyapısında; yinelenen bildirim
+ *    (aynı kullanıcı+kind+başlık) engellenir.
+ * ================================================================== */
+
+export async function bizNotify(userId: string, kind: string, title: string, body: string | null, link: string | null) {
+  const client = await sb();
+  const { data: dup } = await client
+    .from("notifications")
+    .select("id")
+    .eq("user_id", userId)
+    .eq("kind", kind)
+    .eq("title", title)
+    .limit(1);
+  if ((dup ?? []).length) return null; // yinelenen bildirim önleme
+  const { data: row, error } = await client
+    .from("notifications")
+    .insert({ user_id: userId, kind, title, body, link })
+    .select("*")
+    .maybeSingle();
+  if (error) fail(error);
+  return row as Row;
+}
+
+export async function growthInsertRec(
+  actor: BusinessActorLite,
+  d: {
+    area: string;
+    title: string;
+    problem: string;
+    why: string;
+    benefit: string;
+    cost: string;
+    materials: string;
+    steps: string[];
+    plan: Record<string, unknown>;
+    alternative_for?: string | null;
+  }
+) {
+  const client = await sb();
+  const { data: row, error } = await client
+    .from("growth_recommendations")
+    .insert({
+      business_id: actor.businessId,
+      created_by_user: actor.userId,
+      area: d.area,
+      title: d.title.slice(0, 160),
+      problem: d.problem.slice(0, 1200),
+      why: d.why.slice(0, 2000),
+      benefit: d.benefit.slice(0, 1200),
+      cost: d.cost.slice(0, 800),
+      materials: d.materials.slice(0, 800),
+      steps: d.steps.slice(0, 12),
+      plan: d.plan,
+      status: "PROPOSED",
+      alternative_for: d.alternative_for ?? null,
+    })
+    .select("*")
+    .maybeSingle();
+  if (error || !row) fail(error);
+  return row as Row;
+}
+
+export async function growthAnswer(
+  actor: BusinessActorLite,
+  body: Row,
+  snapshot: BusinessSnapshot,
+  extras: GrowthExtras,
+  existing: ExistingRec[]
+) {
+  const client = await sb();
+  const id = String(body.id ?? "");
+  const answer = String(body.answer ?? "");
+  if (!["yes", "no"].includes(answer)) throw new ActionError(400, "Geçersiz cevap (yes/no).");
+  const { data: rec } = await client.from("growth_recommendations").select("*").eq("id", id).maybeSingle();
+  if (!rec) throw new ActionError(404, "Öneri bulunamadı.");
+  if (str(rec.business_id) !== actor.businessId) throw new ActionError(403, "Bu öneri size ait değil.");
+  if (str(rec.status) !== "PROPOSED") throw new ActionError(409, "Bu önerinin cevabı zaten kaydedilmiş.");
+  const reason = body.reason ? String(body.reason).slice(0, 300) : null;
+  const nowIso = new Date().toISOString();
+
+  if (answer === "yes") {
+    const plan = (rec.plan ?? {}) as Row;
+    const kind = str(plan.kind);
+    // İçerik önerilerinde taslaklar SUNUCUDA hemen hazırlanır (görev adım 6).
+    let contentsGenerated = false;
+    if (kind === "content") {
+      const aiAction = str(plan.aiAction);
+      try {
+        if (aiAction === "social") {
+          const c = generateSocial(snapshot, "Instagram");
+          await aiInsertContent(actor, { ...c, status: "DRAFT" });
+          contentsGenerated = true;
+        } else if (aiAction === "story") {
+          const c = generateStory(snapshot);
+          await aiInsertContent(actor, { ...c, status: "DRAFT" });
+          contentsGenerated = true;
+        } else if (aiAction === "ads") {
+          for (const v of generateAdVariants(snapshot)) {
+            await aiInsertContent(actor, {
+              kind: "AD",
+              platform: "DampingVar Reklam Ağı",
+              title: `Reklam ${v.variant} — ${v.angle}`,
+              body: `${v.headline}\n\n${v.body}\n\nNot: Ücretli reklam yayını yönetici onayı olmadan başlamaz.`,
+              cta: "Kampanya koşullarını gör",
+              variant: v.variant,
+              meta: { angle: v.angle, headline: v.headline, source: "growth_assistant" },
+              status: "DRAFT",
+            });
+          }
+          contentsGenerated = true;
+        } else if (aiAction === "video") {
+          const sc = generateVideoScript(snapshot);
+          await aiInsertContent(actor, {
+            kind: "VIDEO",
+            platform: "Instagram Reels / TikTok",
+            title: sc.title,
+            body: sc.scenes.map((s) => `${s.time} — ${s.visual}\nSeslendirme: ${s.voiceover}`).join("\n\n"),
+            cta: sc.cta,
+            meta: { durationSec: sc.durationSec, scenes: sc.scenes, source: "growth_assistant" },
+            status: "DRAFT",
+          });
+          contentsGenerated = true;
+        }
+      } catch {
+        contentsGenerated = false; // içerik üretimi başarısızsa görev NEW kalır
+      }
+    }
+    const tasks = growthTaskTemplate(plan as unknown as GrowthPlan, contentsGenerated);
+    const { data: updated, error } = await client
+      .from("growth_recommendations")
+      .update({ status: "ACCEPTED", answered_at: nowIso, tasks })
+      .eq("id", id)
+      .select("*")
+      .maybeSingle();
+    if (error) fail(error);
+    await bizNotify(
+      actor.userId,
+      "CAMPAIGN",
+      "Büyüme önerisi kabul edildi — görevlerin hazır",
+      `${str(rec.title)} için görev listesi oluşturuldu.${contentsGenerated ? " AI içerik taslakları da hazır (AI Pazarlama listesinde)." : ""}`,
+      kind === "campaign" ? "/panel?s=campaigns" : kind === "ad" ? "/panel?s=advertising" : "/panel?s=ai"
+    );
+    await logAudit(actor.email, actor.staffRole, "GROWTH_ANSWER_YES", "growth_recommendations", id, { title: str(rec.title) });
+    return Response.json({ ok: true, recommendation: cam(updated as Row), contentsGenerated, planKind: kind });
+  }
+
+  // RED: neden kaydedilir + motor alternatif üretir; aynı başlık tekrar SUNULMAZ.
+  const alt = growthAlternative(snapshot, extras, existing, str(rec.title));
+  let altRow: Row | null = null;
+  if (alt) {
+    try {
+      altRow = await growthInsertRec(actor, { ...alt, alternative_for: id });
+    } catch {
+      altRow = null; // aynı başlık açıkken DB unique index engelledi → sorun değil
+    }
+  }
+  const { data: updated, error } = await client
+    .from("growth_recommendations")
+    .update({ status: "REJECTED", rejected_reason: reason, answered_at: nowIso })
+    .eq("id", id)
+    .select("*")
+    .maybeSingle();
+  if (error) fail(error);
+  await bizNotify(
+    actor.userId,
+    "CAMPAIGN",
+    altRow ? "Öneri reddedildi — alternatif hazır" : "Öneri reddedildi",
+    altRow ? `${str(altRow.title)} adlı alternatifi inceleyebilirsin.` : `${str(rec.title)} kaydedildi; bu başlık bir daha sunulmayacak.`,
+    "/panel?s=ai"
+  );
+  await logAudit(actor.email, actor.staffRole, "GROWTH_ANSWER_NO", "growth_recommendations", id, {
+    title: str(rec.title),
+    reason: reason ?? "",
+    alternative: altRow ? str(altRow.title) : null,
+  });
+  return Response.json({ ok: true, recommendation: cam(updated as Row), alternative: altRow ? cam(altRow) : null });
+}
+
+const GROWTH_TASK_STATUSES = ["NEW", "IN_PROGRESS", "WAITING_OWNER", "WAITING_APPROVAL", "WAITING_PUBLISH", "DONE", "CANCELLED"];
+
+export async function growthTaskUpdate(actor: BusinessActorLite, body: Row) {
+  const client = await sb();
+  const id = String(body.id ?? "");
+  const step = Math.max(1, Math.min(11, Math.round(Number(body.step ?? 0))));
+  const status = String(body.status ?? "");
+  if (!step) throw new ActionError(400, "Görev adımı gerekli.");
+  if (!GROWTH_TASK_STATUSES.includes(status)) throw new ActionError(400, "Geçersiz görev durumu.");
+  const { data: rec } = await client.from("growth_recommendations").select("*").eq("id", id).maybeSingle();
+  if (!rec) throw new ActionError(404, "Öneri bulunamadı.");
+  if (str(rec.business_id) !== actor.businessId) throw new ActionError(403, "Bu öneri size ait değil.");
+  if (!["ACCEPTED", "COMPLETED"].includes(str(rec.status))) throw new ActionError(409, "Yalnızca kabul edilmiş önerinin görevleri güncellenebilir.");
+  const tasks = Array.isArray(rec.tasks) ? ([...rec.tasks] as Row[]) : [];
+  const idx = tasks.findIndex((t) => Math.round(Number(t.step)) === step);
+  if (idx < 0) throw new ActionError(404, "Görev bulunamadı.");
+  const prev = tasks[idx] ?? {};
+  tasks[idx] = {
+    ...prev,
+    status,
+    sourceTable: body.sourceTable != null ? String(body.sourceTable).slice(0, 60) : (prev.sourceTable ?? null),
+    sourceId: body.sourceId != null ? String(body.sourceId).slice(0, 80) : (prev.sourceId ?? null),
+  };
+  const allDone = tasks.every((x) => ["DONE", "CANCELLED"].includes(String(x.status)));
+  const { data: updated, error } = await client
+    .from("growth_recommendations")
+    .update({ tasks, ...(allDone ? { status: "COMPLETED" } : {}) })
+    .eq("id", id)
+    .select("*")
+    .maybeSingle();
+  if (error) fail(error);
+  await logAudit(actor.email, actor.staffRole, "GROWTH_TASK_UPDATED", "growth_recommendations", id, { step, status });
+  return Response.json({ ok: true, recommendation: cam(updated as Row) });
+}
+
+/** Bildirimleri okundu işaretle (mevcut notifications tablosu; yalnızca kendi satırları). */
+export async function growthNotificationsRead(actor: BusinessActorLite, body: Row) {
+  const client = await sb();
+  const mode = String(body.read ?? "all");
+  let q = client.from("notifications").update({ read: true }).eq("user_id", actor.userId).eq("read", false);
+  if (mode === "one" && body.id) q = q.eq("id", String(body.id));
+  const { error } = await q;
+  if (error) fail(error);
+  return Response.json({ ok: true });
 }
 
 /** AI ayar anahtarları (RLS: yalnızca yönetici görür; diğerleri boş liste alır). */

@@ -29,6 +29,7 @@ export const ADMIN_NAV: NavItem[] = [
   { key: "analytics", label: "Analitik", icon: <Icon.eye size={16} />, group: "Operasyon" },
   { key: "reports", label: "Raporlar", icon: <Icon.layers size={16} />, group: "Operasyon" },
   { key: "fraud", label: "Fraud ve Kötüye Kullanım", icon: <Icon.alert size={16} />, group: "Operasyon" },
+  { key: "orders", label: "Siparişler", icon: <Icon.receipt size={16} />, group: "Operasyon" },
   { key: "settings", label: "Sistem Ayarları", icon: <Icon.settings size={16} />, group: "Operasyon" },
   { key: "audit", label: "Denetim Kayıtları", icon: <Icon.lock size={16} />, group: "Operasyon" },
 ];
@@ -232,6 +233,40 @@ export default function AdminDashboard({ data, lang, currency, section, affiliat
           {["DRAFT", "ISSUED", "SENT", "PAID", "PARTIALLY_PAID", "OVERDUE", "CANCELLED"].map((s) => <option key={s} value={s}>{s}</option>)}</Select></Td></tr>))}</tbody></Table>
     <ConfirmDialog confirm={confirm} onClose={() => setConfirm(null)} />
   </Wrap>;
+
+  /* FAZ 12A — platform sipariş izleme (sesli asistan/web; ödeme kapıda). */
+  if (section === "orders") {
+    const perPage = 12;
+    const pages = Math.max(1, Math.ceil(data.orders.length / perPage));
+    const safePage = Math.min(page, pages);
+    const rows = data.orders.slice((safePage - 1) * perPage, safePage * perPage);
+    return (
+      <Wrap title="Siparişler" desc="Sesli asistan ve web sipariş talepleri (tüm işletmeler). Ödeme kapıda müşteri ile işletme arasında yapılır; DampingVar ödeme almaz ve tahsil etmez.">
+        {data.orders.length ? (
+          <>
+            <Table>
+              <thead><tr><Th>İşletme</Th><Th>Müşteri</Th><Th>Kalemler</Th><Th right>Tutar</Th><Th>Ödeme</Th><Th>Kaynak</Th><Th>Durum</Th><Th>Tarih</Th></tr></thead>
+              <tbody>
+                {rows.map((o) => (
+                  <tr key={o.id}>
+                    <Td strong>{o.businessName}</Td>
+                    <Td>{o.customerName}<br /><span className="text-[0.76rem] text-muted">{o.customerPhone}</span></Td>
+                    <Td><span className="text-[0.8rem]">{o.items.map((it) => `${it.qty ?? 1}× ${it.name}`).join(", ")}</span></Td>
+                    <Td right><span className="tabular">{money(o.totalCents, currency, lang)}</span></Td>
+                    <Td>{o.paymentMethod === "CARD_DOOR" ? "Kapıda kart" : "Kapıda nakit"}</Td>
+                    <Td>{o.source === "VOICE" ? <Badge tone="accent">Sesli</Badge> : <Badge tone="neutral">Web</Badge>}</Td>
+                    <Td><Badge tone={o.status === "NEW" ? "warning" : o.status === "COMPLETED" ? "positive" : ["REJECTED", "CANCELLED"].includes(o.status) ? "neutral" : "accent"}>{o.status}</Badge></Td>
+                    <Td>{shortDate(new Date(o.createdAt))}</Td>
+                  </tr>
+                ))}
+              </tbody>
+            </Table>
+            <Pagination page={safePage} pages={pages} onPage={setPage} />
+          </>
+        ) : <Notice tone="neutral">Henüz sipariş yok.</Notice>}
+      </Wrap>
+    );
+  }
 
   if (section === "analytics") return <Wrap title="Platform analitiği" desc="Olay türleri ayrı ölçülür; tıklama ile doğrulanmış kullanım aynı metrik değildir.">
     <Card><HBarsInline rows={Object.entries(c.events).map(([k, v]) => ({ label: k, value: v as number }))} /></Card>

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   AreaLine, Badge, BarChart, Button, Card, Checkbox, Dialog, Donut, EmptyState, Field, Funnel, HBars,
   Icon, Input, Kpi, Notice, Progress, QrPanel, Select, Table, Tabs, Td, Textarea, Th, Toggle, VideoModule, useToast,
@@ -8,7 +8,7 @@ import {
 import { DashSectionHead, StatusBadge, type NavItem } from "@/components/Dash";
 import { makeT } from "@/lib/i18n";
 import { CAMPAIGN_TEMPLATES, applyCampaignTemplate, type CampaignTemplate } from "@/lib/campaignTemplates";
-import { daysUntil, money, num, pct, shortDate, type Currency, type Lang } from "@/lib/money";
+import { daysUntil, money, num, pct, relative, shortDate, type Currency, type Lang } from "@/lib/money";
 import type { getBusinessData } from "@/lib/queries";
 import { getBrowserSupabase } from "@/lib/supabase/client";
 
@@ -23,6 +23,7 @@ export const BUSINESS_NAV: NavItem[] = [
   { key: "qr", label: "QR Kampanyaları", icon: <Icon.qr size={16} />, group: "Pazarlama" },
   { key: "traffic", label: "Müşteri Trafiği", icon: <Icon.users size={16} />, group: "Pazarlama" },
   { key: "referrals", label: "Yönlendirme Etkinliği", icon: <Icon.share size={16} />, group: "Pazarlama" },
+  { key: "orders", label: "Siparişler", icon: <Icon.receipt size={16} />, group: "Operasyon" },
   { key: "advertising", label: "Reklam", icon: <Icon.megaphone size={16} />, group: "Pazarlama" },
   { key: "ai", label: "AI Pazarlama", icon: <Icon.spark size={16} />, group: "AI" },
   { key: "growth", label: "28 Günlük Program", icon: <Icon.calendar size={16} />, group: "AI" },
@@ -256,6 +257,7 @@ export default function BusinessDashboard({ data, lang, currency, section, video
 
   /* ------------------------------- ADVERTISING ---------------------------- */
   if (section === "advertising") return <AdvertisingSection d={d} lang={lang} post={post} />;
+  if (section === "orders") return <OrdersSection d={d} post={post} lang={lang} />;
 
   /* ------------------------------------ AI -------------------------------- */
   if (section === "ai") return <AiSection d={d} post={post} videos={videos} />;
@@ -753,6 +755,128 @@ function CampaignsSection({ d, lang, currency, post, profileMissing }: { d: BD; 
             : "Duraklatılan kampanya müşterilere gösterilmez; daha önce oluşmuş kayıtlar korunur."}
         </Notice>
       </Dialog>
+    </div>
+  );
+}
+
+/* ------------------- FAZ 12A — SİPARİŞLER (sesli asistan/web) ------------------ */
+
+const ORDER_STATUS_TR: Record<string, string> = {
+  NEW: "Yeni", CONFIRMED: "Onaylandı", REJECTED: "Reddedildi", PREPARING: "Hazırlanıyor",
+  READY: "Hazır", COMPLETED: "Teslim edildi", CANCELLED: "İptal",
+};
+const ORDER_NEXT: Record<string, Array<{ status: string; label: string; variant?: "primary" | "secondary" | "danger" }>> = {
+  NEW: [{ status: "CONFIRMED", label: "Onayla" }, { status: "REJECTED", label: "Reddet", variant: "danger" }],
+  CONFIRMED: [{ status: "PREPARING", label: "Hazırlanıyor" }, { status: "CANCELLED", label: "İptal", variant: "secondary" }],
+  PREPARING: [{ status: "READY", label: "Hazır" }],
+  READY: [{ status: "COMPLETED", label: "Teslim edildi" }],
+};
+
+/** FAZ 12A — Sesli asistan/web siparişleri: kapıda ödeme; DampingVar ödeme almaz. */
+function OrdersSection({ d, post, lang }: { d: BD; post: (r: string, b: Record<string, unknown>, m: string) => Promise<unknown>; lang: Lang }) {
+  const [filter, setFilter] = useState<"ACTIVE" | "ALL">("ACTIVE");
+  const toast = useToast();
+  const toastRef = useRef(toast);
+  toastRef.current = toast;
+
+  // FAZ 11 deseni: realtime — yalnızca kendi işletmenizin sipariş INSERT'leri duyulur.
+  useEffect(() => {
+    const sb = getBrowserSupabase();
+    let disposed = false;
+    let ch: ReturnType<typeof sb.channel> | null = null;
+    void sb.auth.getSession().then(() => {
+      if (disposed) return;
+      ch = sb
+        .channel(`orders-${d.biz.id}`)
+        .on(
+          "postgres_changes",
+          { event: "INSERT", schema: "public", table: "orders", filter: `business_id=eq.${d.biz.id}` },
+          (payload) => {
+            const x = payload.new as Record<string, unknown>;
+            toastRef.current.push({
+              title: "Yeni sipariş",
+              desc: `${String(x.customer_name ?? "")} · ${Math.round(Number(x.total_cents ?? 0) / 100)} ₺`,
+              tone: "positive",
+            });
+            setTimeout(() => window.location.reload(), 1200);
+          },
+        )
+        .subscribe();
+    });
+    return () => {
+      disposed = true;
+      if (ch) void sb.removeChannel(ch);
+    };
+  }, [d.biz.id]);
+
+  const open = d.orders.filter((o) => !["COMPLETED", "REJECTED", "CANCELLED"].includes(o.status));
+  const rows = filter === "ACTIVE" ? open : d.orders;
+
+  return (
+    <div>
+      <DashSectionHead
+        eyebrow="Operasyon"
+        title="Siparişler"
+        desc="Sesli asistan ve web üzerinden gelen paket servis talepleri. Ödemeyi müşteri kapıda işletmeye yapar; DampingVar ödeme almaz."
+        action={<Badge tone={open.length ? "warning" : "neutral"}>{open.length} açık</Badge>}
+      />
+      <Tabs
+        items={[{ key: "ACTIVE", label: "Açık" }, { key: "ALL", label: "Tümü", count: d.orders.length }]}
+        value={filter}
+        onChange={(v) => setFilter(v as "ACTIVE" | "ALL")}
+      />
+      {rows.length ? (
+        <div className="mt-4">
+          {rows.map((o) => (
+            <Card key={o.id} className="mb-3">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <p className="font-display text-[1rem] font-bold">
+                    {o.customerName}{" "}
+                    {o.source === "VOICE" ? <Badge tone="accent">Sesli asistan</Badge> : <Badge tone="neutral">Web</Badge>}
+                  </p>
+                  <p className="mt-1 text-[0.82rem] text-muted">
+                    <a href={`tel:${o.customerPhone}`} className="link-sweep">{o.customerPhone}</a>
+                    {" · "}{relative(new Date(o.createdAt), lang)}
+                    {o.customerDistrict ? ` · ${o.customerDistrict}` : ""}
+                  </p>
+                </div>
+                <Badge tone={o.status === "NEW" ? "warning" : o.status === "COMPLETED" ? "positive" : ["REJECTED", "CANCELLED"].includes(o.status) ? "neutral" : "accent"}>
+                  {ORDER_STATUS_TR[o.status] ?? o.status}
+                </Badge>
+              </div>
+              <ul className="mt-2 space-y-0.5 text-[0.86rem]">
+                {o.items.map((it, i) => (
+                  <li key={i}>
+                    {it.qty ?? 1} × {it.name}{" "}
+                    <span className="tabular text-muted">({Math.round(((it.qty ?? 1) * (it.unitPriceCents ?? 0)) / 100)} ₺)</span>
+                  </li>
+                ))}
+              </ul>
+              <p className="mt-2 text-[0.9rem] font-semibold">
+                Toplam {Math.round(o.totalCents / 100)} ₺ · {o.paymentMethod === "CARD_DOOR" ? "Kapıda kart" : "Kapıda nakit"}
+              </p>
+              {o.address ? <p className="mt-1 text-[0.82rem] text-muted">Adres: {o.address}{o.note ? ` · Not: ${o.note}` : ""}</p> : null}
+              {ORDER_NEXT[o.status]?.length ? (
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {ORDER_NEXT[o.status].map((a) => (
+                    <Button
+                      key={a.status}
+                      size="sm"
+                      variant={a.variant ?? "primary"}
+                      onClick={() => void post("/api/business", { action: "order_status", id: o.id, status: a.status }, "Sipariş durumu güncellendi")}
+                    >
+                      {a.label}
+                    </Button>
+                  ))}
+                </div>
+              ) : null}
+            </Card>
+          ))}
+        </div>
+      ) : (
+        <Notice tone="neutral" className="mt-4">Henüz sipariş yok. İşletme sayfadaki Sesli Asistan müşterilere sipariş aldırtır.</Notice>
+      )}
     </div>
   );
 }

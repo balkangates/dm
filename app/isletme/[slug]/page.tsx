@@ -7,6 +7,7 @@ import { PublicShell, type SessionLite } from "@/components/Shell";
 import { Badge, Button, Card, Notice, SectionHead } from "@/components/ds";
 import { Icon } from "@/components/icons";
 import { CampaignCardView } from "@/components/discovery";
+import VoiceAssistant from "@/components/voice";
 import { ensureSeeded, getBusinessBySlug, trackEvent } from "@/lib/queries";
 import { DAY_NAMES, isOpenNow, money, type Currency } from "@/lib/money";
 
@@ -183,6 +184,14 @@ export default async function BusinessPage({ params }: P) {
           </aside>
         </div>
       </div>
+
+      {/* FAZ 12A — Ücretsiz Sesli Asistan (tarayıcı Web Speech API; anahtarsız). */}
+      <VoiceAssistant
+        business={{ id: b.id, name: b.name, district: b.district }}
+        products={d.products.filter((p) => p.active).map((p) => ({ name: p.name, priceCents: p.priceCents, discountPriceCents: p.discountPriceCents }))}
+        campaigns={d.campaigns.map((c) => ({ title: c.title, discountPercent: c.discountPercent, discountAmountCents: c.discountAmountCents, endsAt: c.endsAt ? String(c.endsAt) : null }))}
+        user={user ? { name: user.name } : null}
+      />
     </PublicShell>
   );
 }

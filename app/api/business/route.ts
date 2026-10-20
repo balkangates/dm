@@ -34,6 +34,8 @@ export async function POST(req: Request) {
     return jsonError(403, "İçerik onayı için yetkiniz yok.");
   if (action === "ad_request" && !staffCan(actor.staffRole, "ads.write"))
     return jsonError(403, "Reklam talebi için yetkiniz yok.");
+  if (action === "order_status" && !staffCan(actor.staffRole, "orders.manage"))
+    return jsonError(403, "Sipariş durumu için yetkiniz yok.");
 
   try {
     return await businessAction(actor, body as Record<string, unknown>);

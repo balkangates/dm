@@ -26,6 +26,7 @@ export const CUSTOMER_NAV: NavItem[] = [
   { key: "referrals", label: "Davetlerim", icon: <Icon.users size={16} />, group: "Kazançlar" },
   { key: "bonus", label: "Damping Bonus", icon: <Icon.bonus size={16} />, group: "Kazançlar" },
   { key: "activity", label: "QR ve Kampanya Etkinliği", icon: <Icon.qr size={16} />, group: "Kazançlar" },
+  { key: "orders", label: "Siparişlerim", icon: <Icon.receipt size={16} />, group: "Hesap" },
   { key: "notifications", label: "Bildirimler", icon: <Icon.bell size={16} />, group: "Hesap" },
   { key: "profile", label: "Profil ve Tercihler", icon: <Icon.settings size={16} />, group: "Hesap" },
 ];
@@ -498,6 +499,46 @@ export default function CustomerDashboard({
             ))}
           </tbody>
         </Table>
+      </div>
+    );
+  }
+
+  /* ------------------------------ ORDERS (FAZ 12A) ------------------------------ */
+  if (section === "orders") {
+    const ORDER_LABEL: Record<string, string> = {
+      NEW: "İşletmeye iletildi", CONFIRMED: "Onaylandı", REJECTED: "İşletme reddetti",
+      PREPARING: "Hazırlanıyor", READY: "Hazır", COMPLETED: "Teslim edildi", CANCELLED: "İptal",
+    };
+    return (
+      <div>
+        <DashSectionHead
+          eyebrow="Hesap"
+          title="Siparişlerim"
+          desc="Sesli asistan veya işletme sayfası üzerinden gönderdiğin paket servis talepleri. Ödemeyi kapıda işletmeye yaparsın; DampingVar ödeme almaz."
+        />
+        {local.orders.length ? (
+          <div className="space-y-3">
+            {local.orders.map((o) => (
+              <Card key={o.id}>
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <p className="font-display text-[1rem] font-bold">{o.businessName}{o.businessDistrict ? ` · ${o.businessDistrict}` : ""}</p>
+                  <Badge tone={o.status === "NEW" ? "warning" : o.status === "COMPLETED" ? "positive" : ["REJECTED", "CANCELLED"].includes(o.status) ? "neutral" : "accent"}>
+                    {ORDER_LABEL[o.status] ?? o.status}
+                  </Badge>
+                </div>
+                <ul className="mt-2 space-y-0.5 text-[0.86rem]">
+                  {o.items.map((it, i) => <li key={i}>{it.qty ?? 1} × {it.name}</li>)}
+                </ul>
+                <p className="mt-2 text-[0.88rem] font-semibold">
+                  {Math.round(o.totalCents / 100)} ₺ · {o.paymentMethod === "CARD_DOOR" ? "Kapıda kart" : "Kapıda nakit"} · {o.source === "VOICE" ? "Sesli asistan" : "Web"}
+                </p>
+                <p className="mt-1 text-[0.78rem] text-muted">{shortDate(new Date(o.createdAt))}</p>
+              </Card>
+            ))}
+          </div>
+        ) : (
+          <Notice tone="neutral" className="mt-4">Henüz siparişin yok. İşletme sayfalarındaki Sesli Asistan ile sipariş verebilirsin.</Notice>
+        )}
       </div>
     );
   }

@@ -647,6 +647,21 @@ export async function businessAction(actor: BusinessActorLite, body: Row) {
     return Response.json({ ok: true, video: cam(row as Row) });
   }
 
+  /* FAZ 12A — Sesli/web sipariş durum güncellemesi (MANAGER/OWNER). */
+  if (action === "order_status") {
+    const id = String(body.id ?? "");
+    const status = String(body.status ?? "");
+    if (!["CONFIRMED", "REJECTED", "PREPARING", "READY", "COMPLETED", "CANCELLED"].includes(status))
+      throw new ActionError(400, "Geçersiz sipariş durumu.");
+    const { data: row } = await client.from("orders").select("id, business_id, status").eq("id", id).maybeSingle();
+    if (!row) throw new ActionError(404, "Sipariş bulunamadı.");
+    if (str(row.business_id) !== actor.businessId) throw new ActionError(403, "Bu sipariş size ait değil.");
+    const { data: updated, error } = await client.from("orders").update({ status }).eq("id", id).select("*").maybeSingle();
+    if (error) fail(error);
+    await logAudit(actor.email, actor.staffRole, "ORDER_STATUS_CHANGED", "orders", id, { from: str(row.status), to: status });
+    return Response.json({ ok: true, order: cam(updated as Row) });
+  }
+
   if (action === "ad_request") {
     const { data: row, error } = await client
       .from("ad_campaigns")

@@ -353,7 +353,7 @@ export async function listCategories() {
 
 export async function getCustomerData(userId: string) {
   const client = await sb();
-  const [saved, followed, refs, bonuses, usages, notifs, viewed, learning, discovery, invitees] =
+  const [saved, followed, refs, bonuses, usages, notifs, viewed, learning, discovery, invitees, ordQ] =
     await Promise.all([
       client.from("saved_campaigns").select("id, campaign_id, created_at").eq("user_id", userId),
       client.from("followed_businesses").select("business_id").eq("user_id", userId),
@@ -366,6 +366,8 @@ export async function getCustomerData(userId: string) {
       // Not: PostgREST satır sınırı (1000) — eski SQL count(distinct) ile aynı sonuç küçük veride.
       client.from("analytics_events").select("campaign_id").eq("user_id", userId).eq("kind", "campaign_view").limit(1000),
       client.rpc("dv_referral_invitees"),
+      // FAZ 12A — kendi siparişlerim (sesli asistan/web); işletme adı join ile.
+      client.from("orders").select("*, businesses!inner(name, district)").eq("customer_id", userId).order("created_at", { ascending: false }).limit(20),
     ]);
 
   const savedRows = (saved.data ?? []) as Row[];
@@ -430,6 +432,21 @@ export async function getCustomerData(userId: string) {
       inviteeName: pickStr(inviteeRows, r.id, "label"),
       fraudFlags: (r.fraud_flags as string[]) ?? [],
     })),
+    // FAZ 12A — sesli asistan/web siparişlerim (kapıda ödeme; DampingVar tahsil etmez).
+    orders: ((ordQ.data ?? []) as Row[]).map((o) => {
+      const ob = (o.businesses ?? {}) as Row;
+      return {
+        id: str(o.id),
+        businessName: nul(ob.name) ?? "İşletme",
+        businessDistrict: nul(ob.district),
+        items: (o.items as Array<{ name?: string; qty?: number; unitPriceCents?: number }>) ?? [],
+        totalCents: n(o.total_cents),
+        paymentMethod: str(o.payment_method),
+        source: str(o.source),
+        status: str(o.status),
+        createdAt: iso(o.created_at) ?? "",
+      };
+    }),
     bonuses: bonusRows.map((b) => ({
       id: str(b.id),
       businessId: str(b.business_id),
@@ -499,7 +516,7 @@ export async function getBusinessData(businessId: string, days = 14) {
   const { data: biz } = await client.from("businesses").select("*").eq("id", businessId).maybeSingle();
   if (!biz) return null;
 
-  const [hours, camps, qr, usages, staff, ads, contents, plans, pkgs, invs, feeRules, bonusRows, events, labels, refTotal, prods, svcs, growthRows, videoCount] =
+  const [hours, camps, qr, usages, staff, ads, contents, plans, pkgs, invs, feeRules, bonusRows, events, labels, refTotal, prods, svcs, growthRows, videoCount, orderRows] =
     await Promise.all([
       client.from("business_hours").select("*").eq("business_id", businessId),
       client.from("campaigns").select("*").eq("business_id", businessId).order("created_at", { ascending: false }),
@@ -523,6 +540,8 @@ export async function getBusinessData(businessId: string, days = 14) {
       // AI Büyüme Asistanı — öneriler (20.10.2026 isteği); migration 0010.
       client.from("growth_recommendations").select("*").eq("business_id", businessId).order("created_at", { ascending: false }).limit(30),
       client.from("video_assets").select("id", { count: "exact", head: true }).eq("business_id", businessId),
+      // FAZ 12A — sesli asistan/web siparişleri (kapıda ödeme akışı).
+      client.from("orders").select("*").eq("business_id", businessId).order("created_at", { ascending: false }).limit(60),
     ]);
 
   const planRow = ((plans.data ?? []) as Row[])[0] ?? null;
@@ -579,6 +598,21 @@ export async function getBusinessData(businessId: string, days = 14) {
       imageUrl: nul(p.image_url),
     })),
     services: ((svcs.data ?? []) as Row[]).map((s) => ({ name: str(s.name), priceCents: n(s.price_cents) })),
+    // FAZ 12A — sesli asistan/web siparişleri (kapıda ödeme; DampingVar tahsil etmez).
+    orders: ((orderRows.data ?? []) as Row[]).map((o) => ({
+      id: str(o.id),
+      customerName: str(o.customer_name),
+      customerPhone: str(o.customer_phone),
+      customerDistrict: nul(o.customer_district),
+      address: nul(o.address),
+      note: nul(o.note),
+      items: (o.items as Array<{ name?: string; qty?: number; unitPriceCents?: number }>) ?? [],
+      totalCents: n(o.total_cents),
+      paymentMethod: str(o.payment_method),
+      source: str(o.source),
+      status: str(o.status),
+      createdAt: iso(o.created_at) ?? "",
+    })),
     // AI Büyüme Asistanı — öneriler + görev listeleri (tasks jsonb) + işletme bildirimleri.
     videosCount: videoCount.count ?? 0,
     growth: ((growthRows.data ?? []) as Row[]).map((r) => ({
@@ -803,7 +837,7 @@ export async function getBusinessData(businessId: string, days = 14) {
 
 export async function getAdminData() {
   const client = await sb();
-  const [biz, profiles, camps, usages, refs, bonuses, policies, pkgs, feeRules, invs, ads, fraud, audit, aiSet, contents, events, reqs, staff] =
+  const [biz, profiles, camps, usages, refs, bonuses, policies, pkgs, feeRules, invs, ads, fraud, audit, aiSet, contents, events, reqs, staff, ords] =
     await Promise.all([
       client.from("businesses").select("*").order("created_at", { ascending: false }),
       client.from("profiles").select("*").order("created_at", { ascending: false }),
@@ -823,6 +857,8 @@ export async function getAdminData() {
       client.from("analytics_events").select("*").limit(2000),
       client.from("business_requests").select("*").eq("status", "pending"),
       client.from("business_staff").select("*"),
+      // FAZ 12A — platform geneli sipariş izleme (sesli/web).
+      client.from("orders").select("*").order("created_at", { ascending: false }).limit(200),
     ]);
 
   const bizRows = (biz.data ?? []) as Row[];
@@ -839,6 +875,20 @@ export async function getAdminData() {
   const evCount = (k: string) => eventRows.filter((e) => str(e.kind) === k).length;
 
   return {
+    // FAZ 12A — platform siparişleri (sesli asistan/web; ödeme kapıda, DampingVar tahsil etmez).
+    orders: ((ords.data ?? []) as Row[]).map((o) => ({
+      id: str(o.id),
+      businessId: str(o.business_id),
+      businessName: str(bizRows.find((x) => str(x.id) === str(o.business_id))?.name ?? "—"),
+      customerName: str(o.customer_name),
+      customerPhone: str(o.customer_phone),
+      items: (o.items as Array<{ name?: string; qty?: number }>) ?? [],
+      totalCents: n(o.total_cents),
+      paymentMethod: str(o.payment_method),
+      source: str(o.source),
+      status: str(o.status),
+      createdAt: iso(o.created_at) ?? "",
+    })),
     counts: {
       businesses: bizRows.length,
       customers: userRows.filter((u) => str(u.role).toUpperCase() === "CUSTOMER").length,

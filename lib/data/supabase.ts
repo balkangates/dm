@@ -791,6 +791,9 @@ export async function getAdminData() {
       businesses: bizRows.length,
       customers: userRows.filter((u) => str(u.role).toUpperCase() === "CUSTOMER").length,
       campaigns: campRows.length,
+      // "Yayındaki kampanya" KPI'ı için görünürlük kuralı listCampaignCards ile
+      // aynıdır (PUBLISHED + APPROVED); toplam sayı reports'ta kullanılır.
+      campaignsLive: campRows.filter((c) => str(c.status) === "PUBLISHED" && str(c.moderation_status) === "APPROVED").length,
       pendingModeration: campRows.filter((c) => str(c.moderation_status) === "PENDING").length,
       qrScans: usageRows.filter((u) => str(u.status) !== "CANCELLED").length,
       verifiedUsage: usageRows.filter((u) => str(u.status) === "VERIFIED").length,

@@ -590,9 +590,12 @@ function CampaignsSection({ d, lang, currency, post }: { d: BD; lang: Lang; curr
 
 function AdvertisingSection({ d, lang, post }: { d: BD; lang: Lang; post: (r: string, b: Record<string, unknown>, m: string) => Promise<unknown> }) {
   const [f, setF] = useState({ name: "", placement: "ANASAYFA", district: d.biz.district, budgetCents: 250000, endsAt: "" });
+  // Düzeltme: bu bölümün eyebrow'u yanlışlıkla profil anahtarını (biz.profile)
+  // kullanıyordu; reklam bölümüne ait biz.advertising anahtarı TR/EN/KA'da mevcut.
+  const t = makeT(lang);
   return (
     <div>
-      <DashSectionHead eyebrow={t2(lang)} title="Reklam ve görünürlük" desc="Kategori, şehir, ilçe ve tarih bazlı görünürlük satın al. Reklam talebi yönetici onayıyla yayına girer." />
+      <DashSectionHead eyebrow={t("biz.advertising")} title="Reklam ve görünürlük" desc="Kategori, şehir, ilçe ve tarih bazlı görünürlük satın al. Reklam talebi yönetici onayıyla yayına girer." />
       <div className="grid gap-6 lg:grid-cols-[1.2fr_1fr]">
         <div>
           {d.ads.map((a) => (

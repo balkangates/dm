@@ -141,6 +141,9 @@ begin
     alter publication supabase_realtime add table public.notifications;
   end if;
 end $$;
+-- Not: Supabase Realtime postgres_changes abonelerini ZATEN notifications RLS
+-- politikasına tabi tutar (subscriber JWT'siyle); publication'a eklemek yeterlidir.
+-- (Yayına `row_level_security` seçeneği PostgreSQL söz dizimi değildir — eklenmeyecek.)
 
 -- ---------- DOĞRULAMA (read-only) ----------
 select id, public, file_size_limit, allowed_mime_types

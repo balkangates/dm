@@ -53,33 +53,45 @@ export default function CustomerDashboard({
   useEffect(() => {
     if (section !== "notifications") return;
     const sb = getBrowserSupabase();
-    const ch = sb
-      .channel(`notif-${user.id}`)
-      .on(
-        "postgres_changes",
-        { event: "INSERT", schema: "public", table: "notifications", filter: `user_id=eq.${user.id}` },
-        (payload) => {
-          const x = payload.new as Record<string, unknown>;
-          const incoming = {
-            id: String(x.id),
-            kind: String(x.kind ?? "SYSTEM"),
-            title: String(x.title ?? ""),
-            body: x.body == null ? null : String(x.body),
-            link: x.link == null ? null : String(x.link),
-            read: Boolean(x.read),
-            createdAt: x.created_at == null ? null : String(x.created_at),
-          };
-          setLocal((p) =>
-            p.notifications.some((n) => n.id === incoming.id)
-              ? p
-              : { ...p, notifications: [incoming, ...p.notifications] },
-          );
-          toastRef.current.push({ title: "Yeni bildirim", desc: incoming.title, tone: "positive" });
-        },
-      )
-      .subscribe();
+    // FAZ 11 (canlı test revizyonu): soğuk yüklemeyi takiben oturum cookie'den
+    // hâlâ çözülürken kurulan abonelik token'sız (anon) katılır; postgres_changes
+    // aboneleri RLS'e tabi olduğundan anon join olayları süzmez/düzgün filtreler
+    // ve KULLANICI HİÇBİR EŞLEŞME ALAMAZ. Abonelik, oturum çözüldükten sonra
+    // kurulur; join bu sayede kullanıcı JWT'siyle gider. Bölüm değişimindeki
+    // yeniden abonelik zaten aynı yolu izler (canlı doğrulandı).
+    let disposed = false;
+    let ch: ReturnType<typeof sb.channel> | null = null;
+    void sb.auth.getSession().then(() => {
+      if (disposed) return;
+      ch = sb
+        .channel(`notif-${user.id}`)
+        .on(
+          "postgres_changes",
+          { event: "INSERT", schema: "public", table: "notifications", filter: `user_id=eq.${user.id}` },
+          (payload) => {
+            const x = payload.new as Record<string, unknown>;
+            const incoming = {
+              id: String(x.id),
+              kind: String(x.kind ?? "SYSTEM"),
+              title: String(x.title ?? ""),
+              body: x.body == null ? null : String(x.body),
+              link: x.link == null ? null : String(x.link),
+              read: Boolean(x.read),
+              createdAt: x.created_at == null ? null : String(x.created_at),
+            };
+            setLocal((p) =>
+              p.notifications.some((n) => n.id === incoming.id)
+                ? p
+                : { ...p, notifications: [incoming, ...p.notifications] },
+            );
+            toastRef.current.push({ title: "Yeni bildirim", desc: incoming.title, tone: "positive" });
+          },
+        )
+        .subscribe();
+    });
     return () => {
-      void sb.removeChannel(ch);
+      disposed = true;
+      if (ch) void sb.removeChannel(ch);
     };
   }, [section, user.id]);
 

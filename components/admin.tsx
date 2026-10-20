@@ -58,7 +58,7 @@ export default function AdminDashboard({ data, lang, currency, section, affiliat
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <Kpi label="İşletme / marka" value={c.businesses} icon={<Icon.store size={16} />} />
         <Kpi label="Müşteri" value={c.customers} icon={<Icon.users size={16} />} />
-        <Kpi label="Yayındaki kampanya" value={c.campaigns} icon={<Icon.tag size={16} />} />
+        <Kpi label="Yayındaki kampanya" value={c.campaignsLive} icon={<Icon.tag size={16} />} />
         <Kpi label="Moderasyon bekleyen" value={c.pendingModeration} icon={<Icon.shield size={16} />} />
         <Kpi label="QR okutma" value={c.qrScans} icon={<Icon.qr size={16} />} />
         <Kpi label="Doğrulanmış kullanım" value={c.verifiedUsage} icon={<Icon.verified size={16} />} />

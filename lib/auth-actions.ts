@@ -18,6 +18,7 @@ export const STAFF_CAN = {
     "report.read",
     "bonus.read",
     "orders.manage",
+    "products.manage",
   ],
   OWNER: [
     "usage.scan",
@@ -35,6 +36,7 @@ export const STAFF_CAN = {
     "ads.write",
     "staff.manage",
     "orders.manage",
+    "products.manage",
   ],
 } as const;
 

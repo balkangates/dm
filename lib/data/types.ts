@@ -53,6 +53,8 @@ export type CampaignCard = {
   timeEnd: string | null;
   status: string;
   moderationStatus: string;
+  /** FAZ 12B — kampanya kapsamı: GEL_AL (işletme içi) / PAKET_SERVIS (adrese teslim) / ALL. */
+  serviceMode: string;
   isSponsored: boolean;
   imageUrl: string | null;
   qrEnabled: boolean;

@@ -55,6 +55,12 @@ export function CampaignCardView({
               {t("common.sponsored")}
             </span>
           ) : null}
+          {/* FAZ 12B — kapsam rozeti: yalnız kapsam belirtilmiş kampanyalarda görünür. */}
+          {c.serviceMode && c.serviceMode !== "ALL" ? (
+            <span className="rounded-full bg-ink/80 px-2 py-0.5 text-[0.62rem] font-semibold text-white backdrop-blur-sm">
+              {c.serviceMode === "GEL_AL" ? "Gel-al / işletme içi" : "Paket servis"}
+            </span>
+          ) : null}
         </div>
         {c.qrEnabled ? (
           <span className="absolute right-3 top-3 inline-flex items-center gap-1 rounded-full bg-ink/80 px-2 py-1 text-[0.64rem] font-semibold text-white backdrop-blur-sm">

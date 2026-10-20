@@ -87,6 +87,8 @@ function toCard(c: Row) {
     timeEnd: nul(c.time_end),
     status: str(c.status),
     moderationStatus: str(c.moderation_status),
+    // FAZ 12B — kampanya kapsamı: gel-al (işletme içi) / paket servis (adrese teslim).
+    serviceMode: str(c.service_mode) || "ALL",
     isSponsored: Boolean(c.is_sponsored),
     imageUrl: nul(c.image_url),
     qrEnabled: Boolean(c.qr_enabled),
@@ -291,6 +293,8 @@ export async function getBusinessBySlug(slug: string) {
       description: nul(p.description),
       priceCents: n(p.price_cents),
       discountPriceCents: p.discount_price_cents == null ? null : n(p.discount_price_cents),
+      // FAZ 12B — adrese teslim (paket servis) fiyatı; boşsa işletme içi fiyat geçerli.
+      deliveryPriceCents: p.delivery_price_cents == null ? null : n(p.delivery_price_cents),
       category: nul(p.category),
       imageUrl: nul(p.image_url),
       active: Boolean(p.active),
@@ -442,6 +446,7 @@ export async function getCustomerData(userId: string) {
         items: (o.items as Array<{ name?: string; qty?: number; unitPriceCents?: number }>) ?? [],
         totalCents: n(o.total_cents),
         paymentMethod: str(o.payment_method),
+        deliveryType: str(o.delivery_type) || "PAKET_SERVIS",
         source: str(o.source),
         status: str(o.status),
         createdAt: iso(o.created_at) ?? "",
@@ -592,10 +597,17 @@ export async function getBusinessData(businessId: string, days = 14) {
     biz: mapBusiness(biz as Row),
     // AI motorunun işletme profil/ürün/hizmetlere göre uyumlu içerik üretmesi için (istek c).
     products: ((prods.data ?? []) as Row[]).map((p) => ({
+      id: str(p.id),
+      businessId: str(p.business_id),
       name: str(p.name),
+      description: nul(p.description),
       priceCents: n(p.price_cents),
       discountPriceCents: p.discount_price_cents == null ? null : n(p.discount_price_cents),
+      // FAZ 12B — adrese teslim fiyatı (boşsa işletme içi fiyat geçerlidir).
+      deliveryPriceCents: p.delivery_price_cents == null ? null : n(p.delivery_price_cents),
+      category: nul(p.category),
       imageUrl: nul(p.image_url),
+      active: Boolean(p.active),
     })),
     services: ((svcs.data ?? []) as Row[]).map((s) => ({ name: str(s.name), priceCents: n(s.price_cents) })),
     // FAZ 12A — sesli asistan/web siparişleri (kapıda ödeme; DampingVar tahsil etmez).
@@ -609,6 +621,7 @@ export async function getBusinessData(businessId: string, days = 14) {
       items: (o.items as Array<{ name?: string; qty?: number; unitPriceCents?: number }>) ?? [],
       totalCents: n(o.total_cents),
       paymentMethod: str(o.payment_method),
+      deliveryType: str(o.delivery_type) || "PAKET_SERVIS",
       source: str(o.source),
       status: str(o.status),
       createdAt: iso(o.created_at) ?? "",
@@ -662,6 +675,8 @@ export async function getBusinessData(businessId: string, days = 14) {
       days: (c.days as number[]) ?? [],
       status: str(c.status),
       moderationStatus: str(c.moderation_status),
+      // FAZ 12B — kapsam: gel-al (işletme içi) / paket servis (adrese teslim) / ikisi.
+      serviceMode: str(c.service_mode) || "ALL",
       isSponsored: Boolean(c.is_sponsored),
       qrEnabled: Boolean(c.qr_enabled),
       eligibleItems: (c.eligible_items as string[]) ?? [],
@@ -885,6 +900,7 @@ export async function getAdminData() {
       items: (o.items as Array<{ name?: string; qty?: number }>) ?? [],
       totalCents: n(o.total_cents),
       paymentMethod: str(o.payment_method),
+      deliveryType: str(o.delivery_type) || "PAKET_SERVIS",
       source: str(o.source),
       status: str(o.status),
       createdAt: iso(o.created_at) ?? "",
@@ -996,6 +1012,8 @@ export async function getAdminData() {
       title: str(c.title),
       status: str(c.status),
       moderationStatus: str(c.moderation_status),
+      // FAZ 12B — moderasyon listesinde kapsam rozeti için.
+      serviceMode: str(c.service_mode) || "ALL",
       isSponsored: Boolean(c.is_sponsored),
       discountPercent: n(c.discount_percent),
       currency: str(c.currency),

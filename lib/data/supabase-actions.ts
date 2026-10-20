@@ -375,6 +375,12 @@ export async function campaignUpsert(actor: BusinessActorLite, body: Row) {
 
   const minBasketCents = clamp(body.minBasketCents, 0, 10_000_000);
   const currency = ["TRY", "USD", "GEL", "EUR"].includes(String(body.currency)) ? String(body.currency) : "TRY";
+  // FAZ 12B — kampanya kapsamı ZORUNLU: gel-al (işletme içi) / paket servis (adrese teslim) / ikisi.
+  const serviceMode = ["GEL_AL", "PAKET_SERVIS", "ALL"].includes(String(body.serviceMode ?? ""))
+    ? String(body.serviceMode)
+    : "";
+  if (!serviceMode)
+    errors.serviceMode = "Sipariş tipi seçilmeli: gel-al (işletme içi), paket servis (adrese teslim) veya ikisi için de.";
   if (Object.keys(errors).length) return Response.json({ ok: false, errors }, { status: 422 });
 
   const values: Row = {
@@ -387,6 +393,7 @@ export async function campaignUpsert(actor: BusinessActorLite, body: Row) {
     min_basket_cents: minBasketCents,
     max_discount_cents: clamp(body.maxDiscountCents, 0, 5_000_000),
     currency,
+    service_mode: serviceMode,
     starts_at: startsAt.toISOString(),
     ends_at: endsAt ? endsAt.toISOString() : null,
     time_start: body.timeStart ? String(body.timeStart) : null,
@@ -660,6 +667,59 @@ export async function businessAction(actor: BusinessActorLite, body: Row) {
     if (error) fail(error);
     await logAudit(actor.email, actor.staffRole, "ORDER_STATUS_CHANGED", "orders", id, { from: str(row.status), to: status });
     return Response.json({ ok: true, order: cam(updated as Row) });
+  }
+
+  /* FAZ 12B — Ürün CRUD (MANAGER/OWNER). İki fiyat: işletme içi (gel-al/rezervasyon)
+   * = price_cents, adrese teslim (paket servis) = delivery_price_cents (boşsa aynı fiyat). */
+  if (action === "product_save") {
+    const id = body.id ? String(body.id) : null;
+    const name = String(body.name ?? "").trim().slice(0, 120);
+    const description = body.description ? String(body.description).trim().slice(0, 300) : null;
+    const category = body.category ? String(body.category).trim().slice(0, 60) : null;
+    const imageUrl = body.imageUrl ? String(body.imageUrl).trim().slice(0, 400) : null;
+    const priceCents = Math.round(clamp(body.priceCents, 0, 10_000_000));
+    const deliveryPriceCents =
+      body.deliveryPriceCents === null || body.deliveryPriceCents === undefined || String(body.deliveryPriceCents) === ""
+        ? null
+        : Math.round(clamp(body.deliveryPriceCents, 0, 10_000_000));
+    const active = body.active !== false;
+    if (name.length < 2) throw new ActionError(422, "Ürün adı en az 2 karakter olmalı.");
+    const payload: Row = {
+      name,
+      description,
+      category,
+      image_url: imageUrl,
+      price_cents: priceCents,
+      delivery_price_cents: deliveryPriceCents,
+      active,
+    };
+    if (id) {
+      const { data: ex } = await client.from("products").select("id, business_id").eq("id", id).maybeSingle();
+      if (!ex) throw new ActionError(404, "Ürün bulunamadı.");
+      if (str(ex.business_id) !== actor.businessId) throw new ActionError(403, "Bu ürün size ait değil.");
+      const { data: updated, error } = await client.from("products").update(payload).eq("id", id).select("*").maybeSingle();
+      if (error) fail(error);
+      await logAudit(actor.email, actor.staffRole, "PRODUCT_UPDATED", "products", id, { name, deliveryPriceCents });
+      return Response.json({ ok: true, product: cam(updated as Row) });
+    }
+    const { data: created, error } = await client
+      .from("products")
+      .insert({ ...payload, business_id: actor.businessId })
+      .select("*")
+      .maybeSingle();
+    if (error || !created) fail(error);
+    await logAudit(actor.email, actor.staffRole, "PRODUCT_CREATED", "products", String((created as Row).id), { name });
+    return Response.json({ ok: true, product: cam(created as Row) });
+  }
+  if (action === "product_delete") {
+    const id = String(body.id ?? "");
+    const { data: ex } = await client.from("products").select("id, business_id, name").eq("id", id).maybeSingle();
+    if (!ex) throw new ActionError(404, "Ürün bulunamadı.");
+    if (str(ex.business_id) !== actor.businessId) throw new ActionError(403, "Bu ürün size ait değil.");
+    const { error } = await client.from("products").delete().eq("id", id);
+    if (error) fail(error);
+    await logAudit(actor.email, actor.staffRole, "PRODUCT_DELETED", "products", id, { name: str(ex.name) });
+    return Response.json({ ok: true });
   }
 
   if (action === "ad_request") {

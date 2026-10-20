@@ -19,6 +19,7 @@ type BD = NonNull<BusinessData>;
 export const BUSINESS_NAV: NavItem[] = [
   { key: "overview", label: "Genel Bakış", icon: <Icon.chart size={16} />, group: "İşletme" },
   { key: "profile", label: "İşletme Profili", icon: <Icon.store size={16} />, group: "İşletme" },
+  { key: "products", label: "Ürünler", icon: <Icon.tag size={16} />, group: "İşletme" },
   { key: "campaigns", label: "Kampanyalar", icon: <Icon.tag size={16} />, group: "Pazarlama" },
   { key: "qr", label: "QR Kampanyaları", icon: <Icon.qr size={16} />, group: "Pazarlama" },
   { key: "traffic", label: "Müşteri Trafiği", icon: <Icon.users size={16} />, group: "Pazarlama" },
@@ -38,6 +39,8 @@ const EMPTY = {
   title: "", description: "", terms: "", type: "PERCENT", discountPercent: 15, discountAmountCents: 0,
   minBasketCents: 0, currency: "TRY", startsAt: "", endsAt: "", timeStart: "", timeEnd: "",
   eligibleItems: "", exclusions: "", imageUrl: "", perCustomerLimit: 2, usageLimit: 500, qrEnabled: true,
+  // FAZ 12B — kampanya kapsamı zorunlu seçim: "" = henüz seçilmedi (GEL_AL/PAKET_SERVIS/ALL).
+  serviceMode: "",
 };
 
 /* İSTEK (a): işletme sahibi işletme profilini EKSİKSİZ doldurmalı.
@@ -258,6 +261,7 @@ export default function BusinessDashboard({ data, lang, currency, section, video
   /* ------------------------------- ADVERTISING ---------------------------- */
   if (section === "advertising") return <AdvertisingSection d={d} lang={lang} post={post} />;
   if (section === "orders") return <OrdersSection d={d} post={post} lang={lang} />;
+  if (section === "products") return <ProductsSection d={d} post={post} lang={lang} />;
 
   /* ------------------------------------ AI -------------------------------- */
   if (section === "ai") return <AiSection d={d} post={post} videos={videos} />;
@@ -466,7 +470,7 @@ function CampaignsSection({ d, lang, currency, post, profileMissing }: { d: BD; 
     const c = d.campaigns.find((x) => x.id === id); if (!c) return;
     setEditing(id);
     // Not: para alanları formda BİRİM tutar olarak tutulur; kaydetmede ×100'e çevrilir.
-    setF({ ...EMPTY, title: c.title, description: c.description ?? "", terms: c.terms ?? "", type: c.type, discountPercent: c.discountPercent, discountAmountCents: c.discountAmountCents / 100, minBasketCents: c.minBasketCents / 100, currency: c.currency, startsAt: (c.startsAt ?? "").slice(0, 10), endsAt: (c.endsAt ?? "").slice(0, 10), timeStart: c.timeStart ?? "", timeEnd: c.timeEnd ?? "", eligibleItems: c.eligibleItems.join(", "), exclusions: c.exclusions.join(", "), imageUrl: c.imageUrl ?? "", perCustomerLimit: c.perCustomerLimit, usageLimit: c.usageLimit ?? 500, qrEnabled: c.qrEnabled });
+    setF({ ...EMPTY, title: c.title, description: c.description ?? "", terms: c.terms ?? "", type: c.type, discountPercent: c.discountPercent, discountAmountCents: c.discountAmountCents / 100, minBasketCents: c.minBasketCents / 100, currency: c.currency, startsAt: (c.startsAt ?? "").slice(0, 10), endsAt: (c.endsAt ?? "").slice(0, 10), timeStart: c.timeStart ?? "", timeEnd: c.timeEnd ?? "", eligibleItems: c.eligibleItems.join(", "), exclusions: c.exclusions.join(", "), imageUrl: c.imageUrl ?? "", perCustomerLimit: c.perCustomerLimit, usageLimit: c.usageLimit ?? 500, qrEnabled: c.qrEnabled, serviceMode: c.serviceMode ?? "ALL" });
     setErrors({}); setPreview(false); setTplKey(""); setOpen(true);
   }
 
@@ -568,6 +572,8 @@ function CampaignsSection({ d, lang, currency, post, profileMissing }: { d: BD; 
     if (f.type === "PERCENT" && (f.discountPercent <= 0 || f.discountPercent > 70)) e.discountPercent = "%1–70 aralığında olmalı.";
     if ((f.type === "FIXED" || f.type === "PRODUCT") && f.discountAmountCents <= 0) e.discountAmountCents = "Sabit indirim 0'dan büyük olmalı.";
     if (f.endsAt && f.startsAt && new Date(f.endsAt) <= new Date(f.startsAt)) e.endsAt = "Bitiş, başlangıçtan sonra olmalı.";
+    // FAZ 12B — kapsam seçimi zorunlu (sunucuda da zorlanır).
+    if (!["GEL_AL", "PAKET_SERVIS", "ALL"].includes(f.serviceMode)) e.serviceMode = "Kapsam seç: gel-al (işletme içi), paket servis (adrese teslim) veya ikisi için de.";
     // İSTEK (d): görsel olmadan yayınlama YOK (sunucuda da zorlanır).
     if (publish && !f.imageUrl.trim()) e.imageUrl = "Yayınlamak için kampanya görseli gerekli. Görsel yükle veya bağlantısını gir.";
     setErrors(e); return Object.keys(e).length === 0;
@@ -637,6 +643,7 @@ function CampaignsSection({ d, lang, currency, post, profileMissing }: { d: BD; 
               </dl>
               <div className="mt-3 flex flex-wrap items-center gap-2">
                 <StatusBadge status={c.status} lang={lang} /><StatusBadge status={c.moderationStatus} lang={lang} />
+                {c.serviceMode === "GEL_AL" ? <Badge tone="positive">Gel-al / işletme içi</Badge> : c.serviceMode === "PAKET_SERVIS" ? <Badge tone="neutral">Paket servis</Badge> : <Badge tone="neutral">İkisi için de</Badge>}
                 {c.isSponsored ? <Badge tone="accent">{t("common.sponsored")}</Badge> : null}
                 <span className="tabular ml-auto text-[0.74rem] text-muted">{num(c.views, lang)} gösterim · {num(c.clicks, lang)} tıklama · {c.verifiedCount} doğrulandı</span>
               </div>
@@ -704,6 +711,14 @@ function CampaignsSection({ d, lang, currency, post, profileMissing }: { d: BD; 
             <Field label="İndirim türü"><Select value={f.type} onChange={(e) => setF({ ...f, type: e.target.value })}>
               {["PERCENT", "FIXED", "PRODUCT", "HOUR", "DAY", "FIRST", "RETURN", "QR_ONLY"].map((v) => <option key={v} value={v}>{v}</option>)}
             </Select></Field>
+            <Field label="Kapsam (hangi sipariş tipinde geçerli)" required error={errors.serviceMode} hint="Gel-al: işyerinden alan ve içeride yiyen müşteri. Paket servis: adrese teslim.">
+              <Select value={f.serviceMode} onChange={(e) => setF({ ...f, serviceMode: e.target.value })}>
+                <option value="">Seç…</option>
+                <option value="GEL_AL">Gel-al / işletme içi</option>
+                <option value="PAKET_SERVIS">Paket servis (adrese teslim)</option>
+                <option value="ALL">İkisi için de</option>
+              </Select>
+            </Field>
             <Field label="Para birimi"><Select value={f.currency} onChange={(e) => setF({ ...f, currency: e.target.value })}>
               {["TRY", "USD", "GEL", "EUR"].map((v) => <option key={v} value={v}>{v}</option>)}
             </Select></Field>
@@ -759,6 +774,180 @@ function CampaignsSection({ d, lang, currency, post, profileMissing }: { d: BD; 
   );
 }
 
+/* ------------------- FAZ 12B — ÜRÜNLER (iki fiyat) ------------------ */
+
+/** FAZ 12B — Ürün listesi + yeni ürün/düzenle/sil. İki fiyat: işletme içi (gel-al ve
+ * rezervasyon) = priceCents, adrese teslim (paket servis) = deliveryPriceCents (boşsa
+ * işletme içi fiyat geçerlidir). Sesli asistan ve sipariş route'u fiyatları bu listeden
+ * teslimat tipine göre çözer. */
+function ProductsSection({ d, post, lang }: { d: BD; post: (r: string, b: Record<string, unknown>, m: string) => Promise<unknown>; lang: Lang }) {
+  const [openP, setOpenP] = useState(false);
+  const [editing, setEditing] = useState<string | null>(null);
+  const [f, setF] = useState({ name: "", description: "", category: "", priceCents: 0, deliveryPriceCents: "" as string, imageUrl: "", active: true });
+  const [busy, setBusy] = useState(false);
+  const [confirmDel, setConfirmDel] = useState<BD["products"][number] | null>(null);
+  const toast = useToast();
+
+  const products = d.products;
+
+  function openNew() {
+    setEditing(null);
+    setF({ name: "", description: "", category: "", priceCents: 0, deliveryPriceCents: "", imageUrl: "", active: true });
+    setOpenP(true);
+  }
+  function openEditRow(p: BD["products"][number]) {
+    setEditing(p.id);
+    setF({
+      name: p.name,
+      description: p.description ?? "",
+      category: p.category ?? "",
+      priceCents: p.priceCents,
+      deliveryPriceCents: p.deliveryPriceCents != null ? String(p.deliveryPriceCents) : "",
+      imageUrl: p.imageUrl ?? "",
+      active: p.active,
+    });
+    setOpenP(true);
+  }
+  async function save() {
+    if (f.name.trim().length < 2) {
+      toast.push({ title: "Ürün adı en az 2 karakter olmalı", tone: "warning" });
+      return;
+    }
+    if (!(f.priceCents >= 0)) {
+      toast.push({ title: "İşletme içi fiyatı 0 veya daha büyük olmalı", tone: "warning" });
+      return;
+    }
+    setBusy(true);
+    await post(
+      "/api/business",
+      {
+        action: "product_save",
+        id: editing ?? undefined,
+        name: f.name.trim(),
+        description: f.description.trim() || undefined,
+        category: f.category.trim() || undefined,
+        priceCents: Math.round(f.priceCents),
+        deliveryPriceCents: f.deliveryPriceCents.trim() === "" ? null : Math.round(Number(f.deliveryPriceCents)),
+        imageUrl: f.imageUrl.trim() || undefined,
+        active: f.active,
+      },
+      editing ? "Ürün güncellendi" : "Ürün eklendi",
+    );
+    setBusy(false);
+    setOpenP(false);
+  }
+
+  return (
+    <div>
+      <DashSectionHead
+        eyebrow="İşletme"
+        title="Ürünler"
+        desc="Her ürün için iki fiyat tanımlanır: işletme içi (gel-al ve rezervasyon/içeride) ve adrese teslim (paket servis). Adrese teslim fiyatı boş bırakılırsa işletme içi fiyat geçerlidir. Siparişler ve sesli asistan fiyatları teslimat tipine göre buradan çözer."
+        action={<Button icon={<Icon.plus size={15} />} onClick={openNew}>Yeni ürün</Button>}
+      />
+      {products.length ? (
+        <Table>
+          <thead>
+            <tr><Th>Ürün</Th><Th>Kategori</Th><Th right>İşletme içi</Th><Th right>Adrese teslim</Th><Th>Durum</Th><Th>İşlem</Th></tr>
+          </thead>
+          <tbody>
+            {products.map((p) => (
+              <tr key={p.id}>
+                <Td strong>
+                  <span className="inline-flex items-center gap-2">
+                    {p.imageUrl ? <img src={p.imageUrl} alt="" className="h-8 w-8 rounded-[3px] border border-line object-cover" /> : null}
+                    {p.name}
+                  </span>
+                </Td>
+                <Td>{p.category ?? "—"}</Td>
+                <Td right><span className="tabular">{money(p.discountPriceCents ?? p.priceCents, d.biz.currency as Currency, lang)}</span></Td>
+                <Td right>
+                  {p.deliveryPriceCents != null ? (
+                    <span className="tabular">{money(p.deliveryPriceCents, d.biz.currency as Currency, lang)}</span>
+                  ) : (
+                    <span className="text-[0.8rem] text-muted">aynı fiyat</span>
+                  )}
+                </Td>
+                <Td><Badge tone={p.active ? "positive" : "neutral"}>{p.active ? "Aktif" : "Pasif"}</Badge></Td>
+                <Td>
+                  <div className="flex gap-2">
+                    <Button size="sm" variant="secondary" onClick={() => openEditRow(p)}>Düzenle</Button>
+                    <Button size="sm" variant="ghost" onClick={() => setConfirmDel(p)}>Sil</Button>
+                  </div>
+                </Td>
+              </tr>
+            ))}
+          </tbody>
+        </Table>
+      ) : (
+        <Notice tone="neutral" className="mt-4">
+          Henüz ürünün yok. &quot;Yeni ürün&quot; ile adı ve iki fiyatı tanımla — sesli asistan ve paket servis siparişleri bu listeden fiyat çözer.
+        </Notice>
+      )}
+
+      <Dialog
+        open={openP}
+        onClose={() => setOpenP(false)}
+        width="max-w-2xl"
+        title={editing ? "Ürünü düzenle" : "Yeni ürün"}
+        desc="İşletme içi fiyat gel-al ve içeride (rezervasyon) geçerlidir; adrese teslim fiyatı paket servis siparişlerinde kullanılır."
+        footer={
+          <>
+            <Button variant="secondary" onClick={() => setOpenP(false)}>İptal</Button>
+            <Button loading={busy} onClick={() => void save()} icon={<Icon.check size={15} />}>Kaydet</Button>
+          </>
+        }
+      >
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Field label="Ürün adı" className="sm:col-span-2">
+            <Input value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} placeholder="Örn. Tavuk Döner Dürüm" />
+          </Field>
+          <Field label="Kategori (ops.)">
+            <Input value={f.category} onChange={(e) => setF({ ...f, category: e.target.value })} placeholder="Örn. Dürümler" />
+          </Field>
+          <Field label="İşletme içi fiyat (gel-al / rezervasyon)" hint="Kuruş değil, lira">
+            <Input type="number" min={0} value={f.priceCents} onChange={(e) => setF({ ...f, priceCents: Number(e.target.value) })} />
+          </Field>
+          <Field label="Adrese teslim fiyat (paket servis)" hint="Boş bırakılırsa işletme içi fiyat geçerlidir" className="sm:col-span-2">
+            <Input type="number" min={0} value={f.deliveryPriceCents} onChange={(e) => setF({ ...f, deliveryPriceCents: e.target.value })} placeholder="Aynı fiyat olacaksa boş bırak" />
+          </Field>
+          <Field label="Açıklama (ops.)" className="sm:col-span-2">
+            <Textarea value={f.description} onChange={(e) => setF({ ...f, description: e.target.value })} rows={2} />
+          </Field>
+          <Field label="Görsel bağlantısı (ops.)" className="sm:col-span-2">
+            <Input value={f.imageUrl} onChange={(e) => setF({ ...f, imageUrl: e.target.value })} placeholder="https://…" />
+          </Field>
+          <div className="sm:col-span-2"><Checkbox checked={f.active} onChange={(v) => setF({ ...f, active: v })} label="Ürün aktif (menüde ve sesli asistanda görünsün)" /></div>
+        </div>
+      </Dialog>
+
+      <Dialog
+        open={!!confirmDel}
+        onClose={() => setConfirmDel(null)}
+        title="Ürünü sil"
+        footer={
+          <>
+            <Button variant="secondary" onClick={() => setConfirmDel(null)}>Vazgeç</Button>
+            <Button
+              variant="danger"
+              onClick={() => {
+                if (confirmDel) void post("/api/business", { action: "product_delete", id: confirmDel.id }, "Ürün silindi");
+                setConfirmDel(null);
+              }}
+            >
+              Sil
+            </Button>
+          </>
+        }
+      >
+        <p className="text-[0.9rem] text-ink-700">
+          <strong>{confirmDel?.name}</strong> ürünü ve iki fiyatı silinecek. Geçmiş siparişler etkilenmez.
+        </p>
+      </Dialog>
+    </div>
+  );
+}
+
 /* ------------------- FAZ 12A — SİPARİŞLER (sesli asistan/web) ------------------ */
 
 const ORDER_STATUS_TR: Record<string, string> = {
@@ -772,9 +961,11 @@ const ORDER_NEXT: Record<string, Array<{ status: string; label: string; variant?
   READY: [{ status: "COMPLETED", label: "Teslim edildi" }],
 };
 
-/** FAZ 12A — Sesli asistan/web siparişleri: kapıda ödeme; DampingVar ödeme almaz. */
+/** FAZ 12A — Sesli asistan/web siparişleri: kapıda ödeme; DampingVar ödeme almaz.
+ * FAZ 12B — siparişler teslimat tipine göre filtrelenir (gel-al / adrese teslim). */
 function OrdersSection({ d, post, lang }: { d: BD; post: (r: string, b: Record<string, unknown>, m: string) => Promise<unknown>; lang: Lang }) {
   const [filter, setFilter] = useState<"ACTIVE" | "ALL">("ACTIVE");
+  const [dtFilter, setDtFilter] = useState<"ALL" | "GEL_AL" | "PAKET_SERVIS">("ALL");
   const toast = useToast();
   const toastRef = useRef(toast);
   toastRef.current = toast;
@@ -810,20 +1001,31 @@ function OrdersSection({ d, post, lang }: { d: BD; post: (r: string, b: Record<s
   }, [d.biz.id]);
 
   const open = d.orders.filter((o) => !["COMPLETED", "REJECTED", "CANCELLED"].includes(o.status));
-  const rows = filter === "ACTIVE" ? open : d.orders;
+  const base = filter === "ACTIVE" ? open : d.orders;
+  // FAZ 12B — teslimat tipi süzgeci: gel-al (işletme içi) / adrese teslim (paket servis).
+  const rows = dtFilter === "ALL" ? base : base.filter((o) => (o.deliveryType ?? "PAKET_SERVIS") === dtFilter);
 
   return (
     <div>
       <DashSectionHead
         eyebrow="Operasyon"
         title="Siparişler"
-        desc="Sesli asistan ve web üzerinden gelen paket servis talepleri. Ödemeyi müşteri kapıda işletmeye yapar; DampingVar ödeme almaz."
+        desc="Sesli asistan ve web siparişleri; teslimat tipine göre gel-al (işletme içi) ve adrese teslim (paket servis) olarak süzülebilir. Ödemeyi müşteri iş yerinde/kapıda yapar; DampingVar ödeme almaz."
         action={<Badge tone={open.length ? "warning" : "neutral"}>{open.length} açık</Badge>}
       />
       <Tabs
         items={[{ key: "ACTIVE", label: "Açık" }, { key: "ALL", label: "Tümü", count: d.orders.length }]}
         value={filter}
         onChange={(v) => setFilter(v as "ACTIVE" | "ALL")}
+      />
+      <Tabs
+        items={[
+          { key: "ALL", label: "Tüm siparişler" },
+          { key: "GEL_AL", label: "Gel-al", count: base.filter((o) => o.deliveryType === "GEL_AL").length },
+          { key: "PAKET_SERVIS", label: "Paket servis (adrese teslim)", count: base.filter((o) => o.deliveryType !== "GEL_AL").length },
+        ]}
+        value={dtFilter}
+        onChange={(v) => setDtFilter(v as "ALL" | "GEL_AL" | "PAKET_SERVIS")}
       />
       {rows.length ? (
         <div className="mt-4">
@@ -833,7 +1035,8 @@ function OrdersSection({ d, post, lang }: { d: BD; post: (r: string, b: Record<s
                 <div>
                   <p className="font-display text-[1rem] font-bold">
                     {o.customerName}{" "}
-                    {o.source === "VOICE" ? <Badge tone="accent">Sesli asistan</Badge> : <Badge tone="neutral">Web</Badge>}
+                    {o.source === "VOICE" ? <Badge tone="accent">Sesli asistan</Badge> : <Badge tone="neutral">Web</Badge>}{" "}
+                    {o.deliveryType === "GEL_AL" ? <Badge tone="positive">Gel-al</Badge> : <Badge tone="neutral">Paket servis</Badge>}
                   </p>
                   <p className="mt-1 text-[0.82rem] text-muted">
                     <a href={`tel:${o.customerPhone}`} className="link-sweep">{o.customerPhone}</a>
@@ -854,7 +1057,7 @@ function OrdersSection({ d, post, lang }: { d: BD; post: (r: string, b: Record<s
                 ))}
               </ul>
               <p className="mt-2 text-[0.9rem] font-semibold">
-                Toplam {Math.round(o.totalCents / 100)} ₺ · {o.paymentMethod === "CARD_DOOR" ? "Kapıda kart" : "Kapıda nakit"}
+                Toplam {Math.round(o.totalCents / 100)} ₺ · {o.deliveryType === "GEL_AL" ? (o.paymentMethod === "CARD_DOOR" ? "İş yerinde kart" : "İş yerinde nakit") : (o.paymentMethod === "CARD_DOOR" ? "Kapıda kart" : "Kapıda nakit")}
               </p>
               {o.address ? <p className="mt-1 text-[0.82rem] text-muted">Adres: {o.address}{o.note ? ` · Not: ${o.note}` : ""}</p> : null}
               {ORDER_NEXT[o.status]?.length ? (

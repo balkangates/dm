@@ -514,14 +514,17 @@ export default function CustomerDashboard({
         <DashSectionHead
           eyebrow="Hesap"
           title="Siparişlerim"
-          desc="Sesli asistan veya işletme sayfası üzerinden gönderdiğin paket servis talepleri. Ödemeyi kapıda işletmeye yaparsın; DampingVar ödeme almaz."
+          desc="Sesli asistan veya işletme sayfası üzerinden gönderdiğin gel-al (işletme içi) veya adrese teslim (paket servis) talepleri. Ödemeyi iş yerinde/kapıda işletmeye yaparsın; DampingVar ödeme almaz."
         />
         {local.orders.length ? (
           <div className="space-y-3">
             {local.orders.map((o) => (
               <Card key={o.id}>
                 <div className="flex flex-wrap items-center justify-between gap-2">
-                  <p className="font-display text-[1rem] font-bold">{o.businessName}{o.businessDistrict ? ` · ${o.businessDistrict}` : ""}</p>
+                  <p className="font-display text-[1rem] font-bold">
+                    {o.businessName}{o.businessDistrict ? ` · ${o.businessDistrict}` : ""}{" "}
+                    {o.deliveryType === "GEL_AL" ? <Badge tone="positive">Gel-al</Badge> : <Badge tone="neutral">Adrese teslim</Badge>}
+                  </p>
                   <Badge tone={o.status === "NEW" ? "warning" : o.status === "COMPLETED" ? "positive" : ["REJECTED", "CANCELLED"].includes(o.status) ? "neutral" : "accent"}>
                     {ORDER_LABEL[o.status] ?? o.status}
                   </Badge>
@@ -530,7 +533,7 @@ export default function CustomerDashboard({
                   {o.items.map((it, i) => <li key={i}>{it.qty ?? 1} × {it.name}</li>)}
                 </ul>
                 <p className="mt-2 text-[0.88rem] font-semibold">
-                  {Math.round(o.totalCents / 100)} ₺ · {o.paymentMethod === "CARD_DOOR" ? "Kapıda kart" : "Kapıda nakit"} · {o.source === "VOICE" ? "Sesli asistan" : "Web"}
+                  {Math.round(o.totalCents / 100)} ₺ · {o.deliveryType === "GEL_AL" ? (o.paymentMethod === "CARD_DOOR" ? "İş yerinde kart" : "İş yerinde nakit") : (o.paymentMethod === "CARD_DOOR" ? "Kapıda kart" : "Kapıda nakit")} · {o.source === "VOICE" ? "Sesli asistan" : "Web"}
                 </p>
                 <p className="mt-1 text-[0.78rem] text-muted">{shortDate(new Date(o.createdAt))}</p>
               </Card>

@@ -165,7 +165,7 @@ export default function AdminDashboard({ data, lang, currency, section, affiliat
     <Table><thead><tr><Th>Kampanya</Th><Th>İşletme</Th><Th>İndirim</Th><Th>Bitiş</Th><Th>Durum</Th><Th right>Karar</Th></tr></thead>
       <tbody>{data.campaigns.map((cm) => (<tr key={cm.id}><Td strong>{cm.title}<span className="ml-2 text-[0.72rem] text-muted">{cm.code}</span></Td><Td>{cm.businessName}</Td>
         <Td className="tabular">{cm.discountPercent ? `%${cm.discountPercent}` : "—"}</Td><Td>{cm.endsAt ? shortDate(cm.endsAt, lang) : "—"}</Td>
-        <Td><StatusBadge status={cm.moderationStatus} lang={lang} />{cm.isSponsored ? <span className="ml-2"><Badge tone="accent">Sponsorlu</Badge></span> : null}</Td>
+        <Td><StatusBadge status={cm.moderationStatus} lang={lang} />{cm.serviceMode === "GEL_AL" ? <span className="ml-2"><Badge tone="positive">Gel-al</Badge></span> : cm.serviceMode === "PAKET_SERVIS" ? <span className="ml-2"><Badge tone="neutral">Paket servis</Badge></span> : null}{cm.isSponsored ? <span className="ml-2"><Badge tone="accent">Sponsorlu</Badge></span> : null}</Td>
         <Td right><span className="inline-flex gap-1.5">
           <Button size="sm" onClick={() => ask("Kampanyayı onayla", cm.title, () => act({ action: "campaign_moderate", id: cm.id, decision: "APPROVED" }, "Onaylandı"))}>Onayla</Button>
           <Button size="sm" variant="danger" onClick={() => ask("Kampanyayı reddet", `${cm.title} yayından kaldırılacak.`, () => act({ action: "campaign_moderate", id: cm.id, decision: "REJECTED" }, "Reddedildi"))}>Reddet</Button>
@@ -245,7 +245,7 @@ export default function AdminDashboard({ data, lang, currency, section, affiliat
         {data.orders.length ? (
           <>
             <Table>
-              <thead><tr><Th>İşletme</Th><Th>Müşteri</Th><Th>Kalemler</Th><Th right>Tutar</Th><Th>Ödeme</Th><Th>Kaynak</Th><Th>Durum</Th><Th>Tarih</Th></tr></thead>
+              <thead><tr><Th>İşletme</Th><Th>Müşteri</Th><Th>Kalemler</Th><Th right>Tutar</Th><Th>Ödeme</Th><Th>Teslimat</Th><Th>Kaynak</Th><Th>Durum</Th><Th>Tarih</Th></tr></thead>
               <tbody>
                 {rows.map((o) => (
                   <tr key={o.id}>
@@ -253,7 +253,8 @@ export default function AdminDashboard({ data, lang, currency, section, affiliat
                     <Td>{o.customerName}<br /><span className="text-[0.76rem] text-muted">{o.customerPhone}</span></Td>
                     <Td><span className="text-[0.8rem]">{o.items.map((it) => `${it.qty ?? 1}× ${it.name}`).join(", ")}</span></Td>
                     <Td right><span className="tabular">{money(o.totalCents, currency, lang)}</span></Td>
-                    <Td>{o.paymentMethod === "CARD_DOOR" ? "Kapıda kart" : "Kapıda nakit"}</Td>
+                    <Td>{o.deliveryType === "GEL_AL" ? (o.paymentMethod === "CARD_DOOR" ? "İş yerinde kart" : "İş yerinde nakit") : (o.paymentMethod === "CARD_DOOR" ? "Kapıda kart" : "Kapıda nakit")}</Td>
+                    <Td>{o.deliveryType === "GEL_AL" ? <Badge tone="positive">Gel-al</Badge> : <Badge tone="neutral">Paket servis</Badge>}</Td>
                     <Td>{o.source === "VOICE" ? <Badge tone="accent">Sesli</Badge> : <Badge tone="neutral">Web</Badge>}</Td>
                     <Td><Badge tone={o.status === "NEW" ? "warning" : o.status === "COMPLETED" ? "positive" : ["REJECTED", "CANCELLED"].includes(o.status) ? "neutral" : "accent"}>{o.status}</Badge></Td>
                     <Td>{shortDate(new Date(o.createdAt))}</Td>

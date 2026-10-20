@@ -98,8 +98,26 @@ export default async function BusinessPage({ params }: P) {
                         <p className="mt-1 text-[0.85rem] text-muted">{p.description}</p>
                       </div>
                       <div className="text-right">
-                        {p.discountPriceCents ? <p className="tabular text-[0.8rem] text-muted line-through">{money(p.priceCents, cur, locale.lang)}</p> : null}
-                        <p className="tabular text-[1.1rem] font-semibold">{money(p.discountPriceCents ?? p.priceCents, cur, locale.lang)}</p>
+                        {(() => {
+                          // FAZ 12B — iki fiyat: işletme içi (gel-al/rezervasyon) ve adrese teslim (paket servis).
+                          const base = p.discountPriceCents ?? p.priceCents;
+                          const diff = p.deliveryPriceCents != null && p.deliveryPriceCents !== base;
+                          return (
+                            <>
+                              {p.discountPriceCents ? <p className="tabular text-[0.8rem] text-muted line-through">{money(p.priceCents, cur, locale.lang)}</p> : null}
+                              {diff ? (
+                                <>
+                                  <p className="tabular text-[0.78rem] text-muted">İşletme içi</p>
+                                  <p className="tabular text-[1.05rem] font-semibold">{money(base, cur, locale.lang)}</p>
+                                  <p className="tabular mt-1 text-[0.78rem] text-muted">Adrese teslim</p>
+                                  <p className="tabular text-[1.05rem] font-semibold">{money(p.deliveryPriceCents as number, cur, locale.lang)}</p>
+                                </>
+                              ) : (
+                                <p className="tabular text-[1.1rem] font-semibold">{money(base, cur, locale.lang)}</p>
+                              )}
+                            </>
+                          );
+                        })()}
                       </div>
                     </div>
                   ))}
@@ -188,8 +206,8 @@ export default async function BusinessPage({ params }: P) {
       {/* FAZ 12A — Ücretsiz Sesli Asistan (tarayıcı Web Speech API; anahtarsız). */}
       <VoiceAssistant
         business={{ id: b.id, name: b.name, district: b.district }}
-        products={d.products.filter((p) => p.active).map((p) => ({ name: p.name, priceCents: p.priceCents, discountPriceCents: p.discountPriceCents }))}
-        campaigns={d.campaigns.map((c) => ({ title: c.title, discountPercent: c.discountPercent, discountAmountCents: c.discountAmountCents, endsAt: c.endsAt ? String(c.endsAt) : null }))}
+        products={d.products.filter((p) => p.active).map((p) => ({ name: p.name, priceCents: p.priceCents, discountPriceCents: p.discountPriceCents, deliveryPriceCents: p.deliveryPriceCents }))}
+        campaigns={d.campaigns.map((c) => ({ title: c.title, discountPercent: c.discountPercent, discountAmountCents: c.discountAmountCents, endsAt: c.endsAt ? String(c.endsAt) : null, serviceMode: c.serviceMode }))}
         user={user ? { name: user.name } : null}
       />
     </PublicShell>

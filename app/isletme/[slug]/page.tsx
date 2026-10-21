@@ -203,11 +203,19 @@ export default async function BusinessPage({ params }: P) {
         </div>
       </div>
 
-      {/* FAZ 12A — Ücretsiz Sesli Asistan (tarayıcı Web Speech API; anahtarsız). */}
+      {/* FAZ 12A/12C — Ücretsiz Sesli Asistan (tarayıcı Web Speech API; anahtarsız). */}
       <VoiceAssistant
-        business={{ id: b.id, name: b.name, district: b.district }}
-        products={d.products.filter((p) => p.active).map((p) => ({ name: p.name, priceCents: p.priceCents, discountPriceCents: p.discountPriceCents, deliveryPriceCents: p.deliveryPriceCents }))}
-        campaigns={d.campaigns.map((c) => ({ title: c.title, discountPercent: c.discountPercent, discountAmountCents: c.discountAmountCents, endsAt: c.endsAt ? String(c.endsAt) : null, serviceMode: c.serviceMode }))}
+        business={{
+          id: b.id,
+          name: b.name,
+          district: b.district,
+          // FAZ 12C — açık sipariş modları + sipariş alım durumu + KDV varsayılanı.
+          modes: { gelAl: b.modeGelAl, rezerve: b.modeRezerve, paketServis: b.modePaketServis },
+          acceptingOrders: b.acceptingOrders,
+          kdvRate: b.kdvRate,
+        }}
+        products={d.products.filter((p) => p.active).map((p) => ({ name: p.name, priceCents: p.priceCents, discountPriceCents: p.discountPriceCents, deliveryPriceCents: p.deliveryPriceCents, options: p.options, kdvRate: p.kdvRate }))}
+        campaigns={d.campaigns.map((c) => ({ title: c.title, discountPercent: c.discountPercent, discountAmountCents: c.discountAmountCents, minBasketCents: c.minBasketCents, startsAt: c.startsAt, endsAt: c.endsAt, serviceMode: c.serviceMode }))}
         user={user ? { name: user.name } : null}
       />
     </PublicShell>

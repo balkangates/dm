@@ -514,7 +514,7 @@ export default function CustomerDashboard({
         <DashSectionHead
           eyebrow="Hesap"
           title="Siparişlerim"
-          desc="Sesli asistan veya işletme sayfası üzerinden gönderdiğin gel-al (işletme içi) veya adrese teslim (paket servis) talepleri. Ödemeyi iş yerinde/kapıda işletmeye yaparsın; DampingVar ödeme almaz."
+          desc="Sesli asistan veya işletme sayfası üzerinden gönderdiğin gel-al (işletme içi), rezerve veya adrese teslim (paket servis) talepleri. Ödemeyi iş yerinde/kapıda işletmeye yaparsın; DampingVar ödeme almaz."
         />
         {local.orders.length ? (
           <div className="space-y-3">
@@ -523,18 +523,34 @@ export default function CustomerDashboard({
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <p className="font-display text-[1rem] font-bold">
                     {o.businessName}{o.businessDistrict ? ` · ${o.businessDistrict}` : ""}{" "}
-                    {o.deliveryType === "GEL_AL" ? <Badge tone="positive">Gel-al</Badge> : <Badge tone="neutral">Adrese teslim</Badge>}
+                    {o.deliveryType === "GEL_AL" ? <Badge tone="positive">Gel-al</Badge> : o.deliveryType === "REZERVE" ? <Badge tone="accent">Rezerve</Badge> : <Badge tone="neutral">Adrese teslim</Badge>}
                   </p>
                   <Badge tone={o.status === "NEW" ? "warning" : o.status === "COMPLETED" ? "positive" : ["REJECTED", "CANCELLED"].includes(o.status) ? "neutral" : "accent"}>
                     {ORDER_LABEL[o.status] ?? o.status}
                   </Badge>
                 </div>
                 <ul className="mt-2 space-y-0.5 text-[0.86rem]">
-                  {o.items.map((it, i) => <li key={i}>{it.qty ?? 1} × {it.name}</li>)}
+                  {o.items.map((it, i) => (
+                    <li key={i}>
+                      {it.qty ?? 1} × {it.name}
+                      {/* FAZ 12C — ürün notları/ekstraları tercihleri. */}
+                      {Array.isArray(it.options) && it.options.length ? (
+                        <span className="ml-1 text-[0.72rem] text-muted">({it.options.map((op) => `${op.name} ${op.wanted === false ? "olmasın" : "olsun"}`).join(", ")})</span>
+                      ) : null}
+                    </li>
+                  ))}
                 </ul>
                 <p className="mt-2 text-[0.88rem] font-semibold">
-                  {Math.round(o.totalCents / 100)} ₺ · {o.deliveryType === "GEL_AL" ? (o.paymentMethod === "CARD_DOOR" ? "İş yerinde kart" : "İş yerinde nakit") : (o.paymentMethod === "CARD_DOOR" ? "Kapıda kart" : "Kapıda nakit")} · {o.source === "VOICE" ? "Sesli asistan" : "Web"}
+                  {Math.round(o.totalCents / 100)} ₺ · {o.deliveryType === "PAKET_SERVIS" ? (o.paymentMethod === "CARD_DOOR" ? "Kapıda kart" : "Kapıda nakit") : (o.paymentMethod === "CARD_DOOR" ? "İş yerinde kart" : "İş yerinde nakit")} · {o.source === "VOICE" ? "Sesli asistan" : "Web"}
                 </p>
+                {/* FAZ 12C — döküm: matrah − kampanya indirimi + KDV = ödenecek. */}
+                {(o as { discountCents?: number }).discountCents || (o as { kdvCents?: number }).kdvCents ? (
+                  <p className="mt-0.5 text-[0.76rem] tabular text-muted">
+                    Matrah {Math.round(((o as { subtotalCents?: number }).subtotalCents ?? o.totalCents) / 100)} ₺
+                    {((o as { discountCents?: number }).discountCents ?? 0) > 0 ? ` · kampanya indirimi −${Math.round(((o as { discountCents?: number }).discountCents ?? 0) / 100)} ₺` : ""}
+                    {" · "}KDV +{Math.round(((o as { kdvCents?: number }).kdvCents ?? 0) / 100)} ₺
+                  </p>
+                ) : null}
                 <p className="mt-1 text-[0.78rem] text-muted">{shortDate(new Date(o.createdAt))}</p>
               </Card>
             ))}

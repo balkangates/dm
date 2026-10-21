@@ -366,6 +366,9 @@ export default function BusinessDashboard({ data, lang, currency, section, video
           </Notice>
         </Card>
       </div>
+      {/* FAZ 12C — sipariş modları (gel-al/rezerve/paket servis), sipariş alım
+       * anahtarı, otomatik fiş yazdırma ve KDV oranı. */}
+      <div className="mt-6"><OrderSettingsCard d={d} post={post} /></div>
     </div>
   );
 }
@@ -783,7 +786,7 @@ function CampaignsSection({ d, lang, currency, post, profileMissing }: { d: BD; 
 function ProductsSection({ d, post, lang }: { d: BD; post: (r: string, b: Record<string, unknown>, m: string) => Promise<unknown>; lang: Lang }) {
   const [openP, setOpenP] = useState(false);
   const [editing, setEditing] = useState<string | null>(null);
-  const [f, setF] = useState({ name: "", description: "", category: "", priceCents: 0, deliveryPriceCents: "" as string, imageUrl: "", active: true });
+  const [f, setF] = useState({ name: "", description: "", category: "", priceCents: 0, deliveryPriceCents: "" as string, imageUrl: "", active: true, options: "", kdvRate: "" as string });
   const [busy, setBusy] = useState(false);
   const [confirmDel, setConfirmDel] = useState<BD["products"][number] | null>(null);
   const toast = useToast();
@@ -792,7 +795,7 @@ function ProductsSection({ d, post, lang }: { d: BD; post: (r: string, b: Record
 
   function openNew() {
     setEditing(null);
-    setF({ name: "", description: "", category: "", priceCents: 0, deliveryPriceCents: "", imageUrl: "", active: true });
+    setF({ name: "", description: "", category: "", priceCents: 0, deliveryPriceCents: "", imageUrl: "", active: true, options: "", kdvRate: "" });
     setOpenP(true);
   }
   function openEditRow(p: BD["products"][number]) {
@@ -801,10 +804,13 @@ function ProductsSection({ d, post, lang }: { d: BD; post: (r: string, b: Record
       name: p.name,
       description: p.description ?? "",
       category: p.category ?? "",
-      priceCents: p.priceCents,
-      deliveryPriceCents: p.deliveryPriceCents != null ? String(p.deliveryPriceCents) : "",
+      priceCents: p.priceCents / 100,
+      deliveryPriceCents: p.deliveryPriceCents != null ? String(p.deliveryPriceCents / 100) : "",
       imageUrl: p.imageUrl ?? "",
       active: p.active,
+      // FAZ 12C — ürün notları/ekstraları (virgülle) + ürün bazlı KDV.
+      options: (p.options ?? []).join(", "),
+      kdvRate: p.kdvRate != null ? String(p.kdvRate) : "",
     });
     setOpenP(true);
   }
@@ -826,8 +832,12 @@ function ProductsSection({ d, post, lang }: { d: BD; post: (r: string, b: Record
         name: f.name.trim(),
         description: f.description.trim() || undefined,
         category: f.category.trim() || undefined,
-        priceCents: Math.round(f.priceCents),
-        deliveryPriceCents: f.deliveryPriceCents.trim() === "" ? null : Math.round(Number(f.deliveryPriceCents)),
+        // Form lira tutarındadır (kampanya formuyla aynı); DB'ye kuruş olarak gider.
+        priceCents: Math.round(f.priceCents * 100),
+        deliveryPriceCents: f.deliveryPriceCents.trim() === "" ? null : Math.round(Number(f.deliveryPriceCents) * 100),
+        // FAZ 12C — ürün notları/ekstraları (virgülle ayrılmış) + ürün bazlı KDV (boş = işletme varsayılanı).
+        options: f.options.split(",").map((s) => s.trim()).filter(Boolean).slice(0, 20),
+        kdvRate: f.kdvRate === "" ? null : Number(f.kdvRate),
         imageUrl: f.imageUrl.trim() || undefined,
         active: f.active,
       },
@@ -848,7 +858,7 @@ function ProductsSection({ d, post, lang }: { d: BD; post: (r: string, b: Record
       {products.length ? (
         <Table>
           <thead>
-            <tr><Th>Ürün</Th><Th>Kategori</Th><Th right>İşletme içi</Th><Th right>Adrese teslim</Th><Th>Durum</Th><Th>İşlem</Th></tr>
+            <tr><Th>Ürün</Th><Th>Kategori</Th><Th right>İşletme içi</Th><Th right>Adrese teslim</Th><Th>KDV</Th><Th>Durum</Th><Th>İşlem</Th></tr>
           </thead>
           <tbody>
             {products.map((p) => (
@@ -856,7 +866,10 @@ function ProductsSection({ d, post, lang }: { d: BD; post: (r: string, b: Record
                 <Td strong>
                   <span className="inline-flex items-center gap-2">
                     {p.imageUrl ? <img src={p.imageUrl} alt="" className="h-8 w-8 rounded-[3px] border border-line object-cover" /> : null}
-                    {p.name}
+                    <span>
+                      {p.name}
+                      {p.options?.length ? <span className="mt-0.5 block text-[0.7rem] font-normal text-muted">notlar: {p.options.join(", ")}</span> : null}
+                    </span>
                   </span>
                 </Td>
                 <Td>{p.category ?? "—"}</Td>
@@ -868,6 +881,7 @@ function ProductsSection({ d, post, lang }: { d: BD; post: (r: string, b: Record
                     <span className="text-[0.8rem] text-muted">aynı fiyat</span>
                   )}
                 </Td>
+                <Td>{p.kdvRate != null ? <Badge tone="neutral">%{p.kdvRate}</Badge> : <span className="text-[0.78rem] text-muted">varsayılan %{d.biz.kdvRate ?? 20}</span>}</Td>
                 <Td><Badge tone={p.active ? "positive" : "neutral"}>{p.active ? "Aktif" : "Pasif"}</Badge></Td>
                 <Td>
                   <div className="flex gap-2">
@@ -911,6 +925,15 @@ function ProductsSection({ d, post, lang }: { d: BD; post: (r: string, b: Record
           <Field label="Adrese teslim fiyat (paket servis)" hint="Boş bırakılırsa işletme içi fiyat geçerlidir" className="sm:col-span-2">
             <Input type="number" min={0} value={f.deliveryPriceCents} onChange={(e) => setF({ ...f, deliveryPriceCents: e.target.value })} placeholder="Aynı fiyat olacaksa boş bırak" />
           </Field>
+          <Field label="Ürün notları / ekstraları (ops.)" hint="Virgülle ayır: Turşu, Biber, Ketçap, Mayonez — müşteri “turşu olmasın” diyerek tercihini belirtir; sipariş fişinde görünür" className="sm:col-span-2">
+            <Textarea value={f.options} onChange={(e) => setF({ ...f, options: e.target.value })} rows={2} placeholder="Örn. Turşu, Biber, Ketçap, Mayonez" />
+          </Field>
+          <Field label="Ürün KDV oranı (%)" hint="Boş bırakılırsa işletme varsayılanı (Ayarlar) kullanılır">
+            <Select value={f.kdvRate} onChange={(e) => setF({ ...f, kdvRate: e.target.value })}>
+              <option value="">İşletme varsayılanı</option>
+              {KDV_RATE_OPTIONS.map((r) => <option key={r} value={r}>%{r}</option>)}
+            </Select>
+          </Field>
           <Field label="Açıklama (ops.)" className="sm:col-span-2">
             <Textarea value={f.description} onChange={(e) => setF({ ...f, description: e.target.value })} rows={2} />
           </Field>
@@ -948,6 +971,77 @@ function ProductsSection({ d, post, lang }: { d: BD; post: (r: string, b: Record
   );
 }
 
+/* ------------------- FAZ 12C — SİPARİŞ AYARLARI (modlar/KDV/fiş) ------------------- */
+const KDV_RATE_OPTIONS = [0, 1, 10, 18, 20] as const;
+
+/** FAZ 12C — hangi sipariş modu açık (varsayılan: hiçbiri KAPALI), "sipariş
+ * alıyorum" anahtarı, otomatik fiş yazdırma ve işletme KDV oranı. */
+function OrderSettingsCard({ d, post }: { d: BD; post: (r: string, b: Record<string, unknown>, m: string) => Promise<unknown> }) {
+  const biz = d.biz;
+  const [f, setF] = useState({
+    gelAl: biz.modeGelAl,
+    rezerve: biz.modeRezerve,
+    paketServis: biz.modePaketServis,
+    accepting: biz.acceptingOrders,
+    autoprint: biz.orderAutoprint,
+    kdvRate: String(biz.kdvRate ?? 20),
+  });
+  const [busy, setBusy] = useState(false);
+  const toast = useToast();
+  async function save() {
+    if (!f.gelAl && !f.rezerve && !f.paketServis) {
+      toast.push({ title: "En az bir sipariş modu açık olmalı", desc: "Hiçbiri kapalıyken müşteriler sipariş veremez; menüde sipariş görünmez.", tone: "warning" });
+      return;
+    }
+    setBusy(true);
+    await post(
+      "/api/business",
+      {
+        action: "settings_save",
+        modeGelAl: f.gelAl,
+        modeRezerve: f.rezerve,
+        modePaketServis: f.paketServis,
+        acceptingOrders: f.accepting,
+        orderAutoprint: f.autoprint,
+        kdvRate: Number(f.kdvRate),
+      },
+      "Sipariş ayarları kaydedildi",
+    );
+    setBusy(false);
+  }
+  return (
+    <Card>
+      <p className="font-display text-[1rem] font-bold">Sipariş ayarları</p>
+      <p className="mt-1 text-[0.8rem] leading-relaxed text-muted">
+        Sipariş almak istediğin modları işaretle (varsayılan: hepsi kapalı — müşteriler yalnız açık olanları görür ve sipariş verebilir).
+      </p>
+      <div className="mt-4 space-y-3">
+        <Checkbox checked={f.gelAl} onChange={(v) => setF({ ...f, gelAl: v })} label="Gel-al / işletme içi sipariş" />
+        <Checkbox checked={f.rezerve} onChange={(v) => setF({ ...f, rezerve: v })} label="Rezerve (ileri tarihli gel-al) sipariş" />
+        <Checkbox checked={f.paketServis} onChange={(v) => setF({ ...f, paketServis: v })} label="Paket servis (adrese teslim) sipariş" />
+      </div>
+      <div className="mt-4 space-y-3 border-t border-line-soft pt-4">
+        <div className="flex items-center justify-between gap-4">
+          <span className="text-[0.86rem] text-ink-700">Sipariş alıyorum (yoğunlukta kapatıp açabilirsin)</span>
+          <Toggle checked={f.accepting} onChange={(v) => setF({ ...f, accepting: v })} label="Sipariş alıyorum" />
+        </div>
+        <div className="flex items-center justify-between gap-4">
+          <span className="text-[0.86rem] text-ink-700">Sipariş düştüğünde fişi otomatik yazdır (adisyon yazıcı)</span>
+          <Toggle checked={f.autoprint} onChange={(v) => setF({ ...f, autoprint: v })} label="Otomatik fiş yazdırma" />
+        </div>
+        <Field label="İşletme KDV oranı (%)" hint="Ürün bazlı oran girilmezse bu oran kullanılır (matrah − kampanya indirimi + KDV)">
+          <Select value={f.kdvRate} onChange={(e) => setF({ ...f, kdvRate: e.target.value })}>
+            {KDV_RATE_OPTIONS.map((r) => <option key={r} value={r}>%{r}</option>)}
+          </Select>
+        </Field>
+      </div>
+      <div className="mt-4 border-t border-line-soft pt-4">
+        <Button loading={busy} onClick={() => void save()} icon={<Icon.check size={15} />}>Ayarları kaydet</Button>
+      </div>
+    </Card>
+  );
+}
+
 /* ------------------- FAZ 12A — SİPARİŞLER (sesli asistan/web) ------------------ */
 
 const ORDER_STATUS_TR: Record<string, string> = {
@@ -961,11 +1055,92 @@ const ORDER_NEXT: Record<string, Array<{ status: string; label: string; variant?
   READY: [{ status: "COMPLETED", label: "Teslim edildi" }],
 };
 
+/** FAZ 12C — sipariş düştüğünde çalınan kısa zil (Web Audio; anahtar/gömülü ses dosyası yok). */
+function playOrderBell() {
+  try {
+    const w = window as unknown as { AudioContext?: typeof AudioContext; webkitAudioContext?: typeof AudioContext };
+    const Ctor = w.AudioContext ?? w.webkitAudioContext;
+    if (!Ctor) return;
+    const ac = new Ctor();
+    const t0 = ac.currentTime;
+    [0, 0.26].forEach((off, i) => {
+      const osc = ac.createOscillator();
+      const gain = ac.createGain();
+      osc.type = "sine";
+      osc.frequency.value = i === 0 ? 880 : 1174.66;
+      gain.gain.setValueAtTime(0.0001, t0 + off);
+      gain.gain.exponentialRampToValueAtTime(0.3, t0 + off + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.0001, t0 + off + 0.24);
+      osc.connect(gain);
+      gain.connect(ac.destination);
+      osc.start(t0 + off);
+      osc.stop(t0 + off + 0.3);
+    });
+    setTimeout(() => void ac.close(), 1200);
+  } catch {
+    /* ses çalınamadı — yoksay (otomatik oynatma kuralı) */
+  }
+}
+
+/** FAZ 12C — adisyon fişi: yeni pencerede 80 mm düzeni + otomatik yazdırma.
+ * Tarayıcı açılan pencerede yazdırmayı engelleyebilir; false dönerse zil + bildirim yeterlidir. */
+function printOrderReceipt(x: Record<string, unknown>) {
+  try {
+    const w = window.open("", "_blank", "width=420,height=680");
+    if (!w) return false;
+    const esc = (s: unknown) =>
+      String(s ?? "").replace(/[<>&]/g, (c) => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;" })[c] as string);
+    const tl = (c: unknown) => `${(Number(c ?? 0) / 100).toFixed(2)} TL`;
+    const items = Array.isArray(x.items) ? (x.items as Array<Record<string, unknown>>) : [];
+    const dt = String(x.delivery_type ?? "PAKET_SERVIS");
+    const itemsHtml = items
+      .map((it) => {
+        const opts = Array.isArray(it.options) ? (it.options as Array<Record<string, unknown>>) : [];
+        const optLine = opts.length
+          ? `<div class="opt">${opts.map((o) => `${esc(o.name)}: ${o.wanted === false ? "OLMASIN" : "OLSUN"}`).join(" · ")}</div>`
+          : "";
+        return `<tr><td>${Number(it.qty ?? 1)} x ${esc(it.name)}${optLine}</td><td class="r">${tl(Number(it.qty ?? 1) * Number(it.unitPriceCents ?? 0))}</td></tr>`;
+      })
+      .join("");
+    const discount = Number(x.discount_cents ?? 0);
+    const breakdownHtml =
+      `<tr><td>Matrah (KDV haric)</td><td class="r">${tl(x.subtotal_cents)}</td></tr>` +
+      (discount > 0
+        ? `<tr><td>Kampanya indirimi${x.campaign_title ? ` (${esc(x.campaign_title)})` : ""}</td><td class="r">-${tl(discount)}</td></tr>`
+        : "") +
+      `<tr><td>KDV</td><td class="r">+${tl(x.kdv_cents)}</td></tr>`;
+    w.document.write(`<!doctype html><html lang="tr"><head><meta charset="utf-8"><title>Siparis fis #${esc(String(x.id ?? "").slice(0, 8))}</title>
+<style>body{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;margin:0;padding:10px;width:280px}h1{font-size:14px;margin:0 0 2px}p{margin:0 0 2px}hr{border:0;border-top:1px dashed #000;margin:6px 0}table{width:100%;border-collapse:collapse}td{vertical-align:top;padding:1px 0}td.r{text-align:right}.opt{font-size:10px;color:#444}.big{font-weight:700;font-size:13px}</style></head><body>
+<h1>${esc(x.business_name ?? "SIPARIS")}</h1>
+<p>#${esc(String(x.id ?? "").slice(0, 8))} · ${new Date(String(x.created_at ?? Date.now())).toLocaleString("tr-TR")}</p>
+<p>TIP: ${dt === "GEL_AL" ? "GEL-AL (isletme ici)" : dt === "REZERVE" ? "REZERVE (ileri tarihli gel-al)" : "PAKET SERVIS (adrese teslim)"}</p>
+<p>ODEME: ${String(x.payment_method) === "CARD_DOOR" ? (dt === "PAKET_SERVIS" ? "Kapida kart" : "Is yerinde kart") : dt === "PAKET_SERVIS" ? "Kapida nakit" : "Is yerinde nakit"}</p>
+<hr>
+<p><strong>${esc(x.customer_name)}</strong> · ${esc(x.customer_phone)}</p>
+${x.address ? `<p>Adres: ${esc(x.address)}</p>` : ""}
+${x.note ? `<p>Not: ${esc(x.note)}</p>` : ""}
+<hr>
+<table>${itemsHtml}</table>
+<hr>
+<table>${breakdownHtml}<tr class="big"><td>ODENECEK TOPLAM</td><td class="r">${tl(x.total_cents)}</td></tr></table>
+<hr><p style="font-size:10px">DampingVar odeme almaz; odeme musteri ile isletme arasinda yapilir.</p>
+</body></html>`);
+    w.document.close();
+    w.focus();
+    setTimeout(() => w.print(), 350);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /** FAZ 12A — Sesli asistan/web siparişleri: kapıda ödeme; DampingVar ödeme almaz.
- * FAZ 12B — siparişler teslimat tipine göre filtrelenir (gel-al / adrese teslim). */
+ * FAZ 12B — siparişler teslimat tipine göre filtrelenir (gel-al / adrese teslim).
+ * FAZ 12C — sipariş düştüğünde ZİL + otomatik fiş yazdırma; REZERVE modu;
+ *           yoğunlukta "siparişi durdur/başlat"; döküm (matrah/indirim/KDV) ve ürün notları. */
 function OrdersSection({ d, post, lang }: { d: BD; post: (r: string, b: Record<string, unknown>, m: string) => Promise<unknown>; lang: Lang }) {
   const [filter, setFilter] = useState<"ACTIVE" | "ALL">("ACTIVE");
-  const [dtFilter, setDtFilter] = useState<"ALL" | "GEL_AL" | "PAKET_SERVIS">("ALL");
+  const [dtFilter, setDtFilter] = useState<"ALL" | "GEL_AL" | "REZERVE" | "PAKET_SERVIS">("ALL");
   const toast = useToast();
   const toastRef = useRef(toast);
   toastRef.current = toast;
@@ -984,6 +1159,14 @@ function OrdersSection({ d, post, lang }: { d: BD; post: (r: string, b: Record<s
           { event: "INSERT", schema: "public", table: "orders", filter: `business_id=eq.${d.biz.id}` },
           (payload) => {
             const x = payload.new as Record<string, unknown>;
+            // FAZ 12C — sipariş düştüğünde zil sesi (her zaman açık) + otomatik fiş.
+            playOrderBell();
+            if (d.biz.orderAutoprint) {
+              const printed = printOrderReceipt({ ...x, business_name: d.biz.name });
+              if (!printed) {
+                toastRef.current.push({ title: "Fiş penceresi engellendi", desc: "Tarayıcı açılır pencere/yazdırma iznini kontrol et; ayarlardan otomatik yazdırmayı kapatabilirsin.", tone: "warning" });
+              }
+            }
             toastRef.current.push({
               title: "Yeni sipariş",
               desc: `${String(x.customer_name ?? "")} · ${Math.round(Number(x.total_cents ?? 0) / 100)} ₺`,
@@ -998,11 +1181,11 @@ function OrdersSection({ d, post, lang }: { d: BD; post: (r: string, b: Record<s
       disposed = true;
       if (ch) void sb.removeChannel(ch);
     };
-  }, [d.biz.id]);
+  }, [d.biz.id, d.biz.orderAutoprint, d.biz.name]);
 
   const open = d.orders.filter((o) => !["COMPLETED", "REJECTED", "CANCELLED"].includes(o.status));
   const base = filter === "ACTIVE" ? open : d.orders;
-  // FAZ 12B — teslimat tipi süzgeci: gel-al (işletme içi) / adrese teslim (paket servis).
+  // FAZ 12B/12C — teslimat tipi süzgeci: gel-al (işletme içi) / rezerve / adrese teslim.
   const rows = dtFilter === "ALL" ? base : base.filter((o) => (o.deliveryType ?? "PAKET_SERVIS") === dtFilter);
 
   return (
@@ -1010,9 +1193,37 @@ function OrdersSection({ d, post, lang }: { d: BD; post: (r: string, b: Record<s
       <DashSectionHead
         eyebrow="Operasyon"
         title="Siparişler"
-        desc="Sesli asistan ve web siparişleri; teslimat tipine göre gel-al (işletme içi) ve adrese teslim (paket servis) olarak süzülebilir. Ödemeyi müşteri iş yerinde/kapıda yapar; DampingVar ödeme almaz."
-        action={<Badge tone={open.length ? "warning" : "neutral"}>{open.length} açık</Badge>}
+        desc="Sesli asistan ve web siparişleri; teslimat tipine göre gel-al (işletme içi), rezerve ve adrese teslim (paket servis) olarak süzülebilir. Ödemeyi müşteri iş yerinde/kapıda yapar; DampingVar ödeme almaz."
+        action={
+          <div className="flex items-center gap-2">
+            <Badge tone={open.length ? "warning" : "neutral"}>{open.length} açık</Badge>
+            {/* FAZ 12C — yoğunlukta siparişi durdur/başlat (ayarlar > sipariş ayarlarıyla aynı anahtar). */}
+            <Button
+              size="sm"
+              variant={d.biz.acceptingOrders ? "danger" : "primary"}
+              onClick={() =>
+                void post(
+                  "/api/business",
+                  { action: "settings_save", acceptingOrders: !d.biz.acceptingOrders },
+                  d.biz.acceptingOrders ? "Sipariş alımı durduruldu — yeni sipariş alınmıyor" : "Sipariş alımı başlatıldı",
+                )
+              }
+            >
+              {d.biz.acceptingOrders ? "Sipariş almayı durdur" : "Sipariş almayı başlat"}
+            </Button>
+          </div>
+        }
       />
+      {!d.biz.acceptingOrders ? (
+        <Notice tone="warning" icon={<Icon.info size={16} />} className="mb-4">
+          Şu an <strong>sipariş almıyorsun</strong> — müşteriler sipariş veremez. Yoğunluk bittiğinde “Sipariş almayı başlat” ile aç.
+        </Notice>
+      ) : null}
+      {!d.biz.modeGelAl && !d.biz.modeRezerve && !d.biz.modePaketServis ? (
+        <Notice tone="warning" icon={<Icon.info size={16} />} className="mb-4">
+          Hiçbir sipariş modu açık değil — müşteriler sipariş veremez. Ayarlar → Sipariş ayarları bölümünden modları aç.
+        </Notice>
+      ) : null}
       <Tabs
         items={[{ key: "ACTIVE", label: "Açık" }, { key: "ALL", label: "Tümü", count: d.orders.length }]}
         value={filter}
@@ -1022,10 +1233,11 @@ function OrdersSection({ d, post, lang }: { d: BD; post: (r: string, b: Record<s
         items={[
           { key: "ALL", label: "Tüm siparişler" },
           { key: "GEL_AL", label: "Gel-al", count: base.filter((o) => o.deliveryType === "GEL_AL").length },
-          { key: "PAKET_SERVIS", label: "Paket servis (adrese teslim)", count: base.filter((o) => o.deliveryType !== "GEL_AL").length },
+          { key: "REZERVE", label: "Rezerve", count: base.filter((o) => o.deliveryType === "REZERVE").length },
+          { key: "PAKET_SERVIS", label: "Paket servis (adrese teslim)", count: base.filter((o) => o.deliveryType === "PAKET_SERVIS").length },
         ]}
         value={dtFilter}
-        onChange={(v) => setDtFilter(v as "ALL" | "GEL_AL" | "PAKET_SERVIS")}
+        onChange={(v) => setDtFilter(v as "ALL" | "GEL_AL" | "REZERVE" | "PAKET_SERVIS")}
       />
       {rows.length ? (
         <div className="mt-4">
@@ -1036,7 +1248,7 @@ function OrdersSection({ d, post, lang }: { d: BD; post: (r: string, b: Record<s
                   <p className="font-display text-[1rem] font-bold">
                     {o.customerName}{" "}
                     {o.source === "VOICE" ? <Badge tone="accent">Sesli asistan</Badge> : <Badge tone="neutral">Web</Badge>}{" "}
-                    {o.deliveryType === "GEL_AL" ? <Badge tone="positive">Gel-al</Badge> : <Badge tone="neutral">Paket servis</Badge>}
+                    {o.deliveryType === "GEL_AL" ? <Badge tone="positive">Gel-al</Badge> : o.deliveryType === "REZERVE" ? <Badge tone="accent">Rezerve</Badge> : <Badge tone="neutral">Paket servis</Badge>}
                   </p>
                   <p className="mt-1 text-[0.82rem] text-muted">
                     <a href={`tel:${o.customerPhone}`} className="link-sweep">{o.customerPhone}</a>
@@ -1053,13 +1265,32 @@ function OrdersSection({ d, post, lang }: { d: BD; post: (r: string, b: Record<s
                   <li key={i}>
                     {it.qty ?? 1} × {it.name}{" "}
                     <span className="tabular text-muted">({Math.round(((it.qty ?? 1) * (it.unitPriceCents ?? 0)) / 100)} ₺)</span>
+                    {/* FAZ 12C — ürün notları/ekstraları ("turşu olmasın" gibi tercihler). */}
+                    {Array.isArray(it.options) && it.options.length ? (
+                      <span className="mt-0.5 block text-[0.72rem]">
+                        {it.options.map((o2, j) => (
+                          <span key={j} className={`mr-1 rounded-full border px-1.5 py-0.5 ${o2.wanted ? "border-positive/40 text-positive" : "border-line text-muted line-through"}`}>
+                            {o2.name}{o2.wanted ? "" : " ✕"}
+                          </span>
+                        ))}
+                      </span>
+                    ) : null}
                   </li>
                 ))}
               </ul>
               <p className="mt-2 text-[0.9rem] font-semibold">
-                Toplam {Math.round(o.totalCents / 100)} ₺ · {o.deliveryType === "GEL_AL" ? (o.paymentMethod === "CARD_DOOR" ? "İş yerinde kart" : "İş yerinde nakit") : (o.paymentMethod === "CARD_DOOR" ? "Kapıda kart" : "Kapıda nakit")}
+                Toplam {Math.round(o.totalCents / 100)} ₺ · {o.deliveryType === "PAKET_SERVIS" ? (o.paymentMethod === "CARD_DOOR" ? "Kapıda kart" : "Kapıda nakit") : (o.paymentMethod === "CARD_DOOR" ? "İş yerinde kart" : "İş yerinde nakit")}
               </p>
+              {/* FAZ 12C — döküm: matrah − kampanya indirimi + KDV = ödenecek. */}
+              {o.discountCents > 0 || o.kdvCents > 0 ? (
+                <p className="mt-0.5 text-[0.76rem] text-muted tabular">
+                  Matrah {Math.round(o.subtotalCents / 100)} ₺
+                  {o.discountCents > 0 ? ` · ${o.campaignTitle ? `${o.campaignTitle}: ` : "indirim: "}−${Math.round(o.discountCents / 100)} ₺` : ""}
+                  {" · "}KDV +{Math.round(o.kdvCents / 100)} ₺ · ödenecek <strong className="text-ink">{Math.round(o.totalCents / 100)} ₺</strong>
+                </p>
+              ) : null}
               {o.address ? <p className="mt-1 text-[0.82rem] text-muted">Adres: {o.address}{o.note ? ` · Not: ${o.note}` : ""}</p> : null}
+              {!o.address && o.note ? <p className="mt-1 text-[0.82rem] text-muted">Not: {o.note}</p> : null}
               {ORDER_NEXT[o.status]?.length ? (
                 <div className="mt-3 flex flex-wrap gap-2">
                   {ORDER_NEXT[o.status].map((a) => (

@@ -30,6 +30,8 @@ export async function POST(req: Request) {
   if (action === "profile" && !staffCan(actor.staffRole, "profile.write"))
     return jsonError(403, `${actor.staffRole} rolü işletme profilini düzenleyemez.`);
   if (action === "hours" && !staffCan(actor.staffRole, "profile.write")) return jsonError(403, "Yetkiniz yok.");
+  if (action === "settings_save" && !staffCan(actor.staffRole, "profile.write"))
+    return jsonError(403, "Sipariş ayarlarını düzenlemek için yetkiniz yok.");
   if ((action === "content_decision" || action === "content_delete") && !staffCan(actor.staffRole, "content.approve"))
     return jsonError(403, "İçerik onayı için yetkiniz yok.");
   if (action === "ad_request" && !staffCan(actor.staffRole, "ads.write"))

@@ -669,6 +669,31 @@ export async function businessAction(actor: BusinessActorLite, body: Row) {
     return Response.json({ ok: true, order: cam(updated as Row) });
   }
 
+  /* FAZ 12C — Sipariş ayarları (MANAGER/OWNER): modlar (gel-al/rezerve/paket
+   * servis; varsayılan kapalı — işletme isterse açar), "sipariş alıyorum"
+   * anahtarı, otomatik fiş yazdırma, işletme KDV oranı (0/1/10/18/20). */
+  if (action === "settings_save") {
+    const { data: cur } = await client
+      .from("businesses")
+      .select("mode_gel_al, mode_paket_servis, mode_rezerve, accepting_orders, order_autoprint, kdv_rate")
+      .eq("id", actor.businessId)
+      .maybeSingle();
+    if (!cur) throw new ActionError(404, "İşletme bulunamadı.");
+    const b2 = (v: unknown, dflt: boolean) => (typeof v === "boolean" ? v : dflt);
+    const payload: Row = {
+      mode_gel_al: b2(body.modeGelAl, cur.mode_gel_al === true),
+      mode_paket_servis: b2(body.modePaketServis, cur.mode_paket_servis === true),
+      mode_rezerve: b2(body.modeRezerve, cur.mode_rezerve === true),
+      accepting_orders: b2(body.acceptingOrders, cur.accepting_orders !== false),
+      order_autoprint: b2(body.orderAutoprint, cur.order_autoprint !== false),
+      kdv_rate: [0, 1, 10, 18, 20].includes(Number(body.kdvRate)) ? Number(body.kdvRate) : Number(cur.kdv_rate ?? 20),
+    };
+    const { data: updated, error } = await client.from("businesses").update(payload).eq("id", actor.businessId).select("*").maybeSingle();
+    if (error) fail(error);
+    await logAudit(actor.email, actor.staffRole, "BUSINESS_ORDER_SETTINGS", "businesses", actor.businessId, payload);
+    return Response.json({ ok: true, settings: cam(updated as Row) });
+  }
+
   /* FAZ 12B — Ürün CRUD (MANAGER/OWNER). İki fiyat: işletme içi (gel-al/rezervasyon)
    * = price_cents, adrese teslim (paket servis) = delivery_price_cents (boşsa aynı fiyat). */
   if (action === "product_save") {
@@ -683,6 +708,16 @@ export async function businessAction(actor: BusinessActorLite, body: Row) {
         ? null
         : Math.round(clamp(body.deliveryPriceCents, 0, 10_000_000));
     const active = body.active !== false;
+    // FAZ 12C — ürün notları/ekstraları (ör. Turşu, Biber, Ketçap) + ürün bazlı KDV.
+    const options = Array.isArray(body.options)
+      ? (body.options as unknown[]).map((o) => String(o ?? "").trim().slice(0, 40)).filter(Boolean).slice(0, 20)
+      : [];
+    const kdvRate =
+      body.kdvRate === null || body.kdvRate === undefined || body.kdvRate === ""
+        ? null
+        : [0, 1, 10, 18, 20].includes(Number(body.kdvRate))
+          ? Number(body.kdvRate)
+          : null;
     if (name.length < 2) throw new ActionError(422, "Ürün adı en az 2 karakter olmalı.");
     const payload: Row = {
       name,
@@ -691,6 +726,8 @@ export async function businessAction(actor: BusinessActorLite, body: Row) {
       image_url: imageUrl,
       price_cents: priceCents,
       delivery_price_cents: deliveryPriceCents,
+      options,
+      kdv_rate: kdvRate,
       active,
     };
     if (id) {

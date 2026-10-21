@@ -63,6 +63,13 @@ function mapBusiness(b: Row): BusinessRow {
     verified: Boolean(b.verified),
     featured: Boolean(b.featured),
     createdAt: new Date(str(b.created_at)),
+    // FAZ 12C — sipariş ayarları (migration 0014 öncesi için güvenli varsayılanlar).
+    modeGelAl: b.mode_gel_al === true,
+    modePaketServis: b.mode_paket_servis === true,
+    modeRezerve: b.mode_rezerve === true,
+    acceptingOrders: b.accepting_orders !== false,
+    orderAutoprint: b.order_autoprint !== false,
+    kdvRate: n(b.kdv_rate ?? 20),
   } as BusinessRow;
 }
 
@@ -277,7 +284,8 @@ export async function getBusinessBySlug(slug: string) {
   const businessId = str(biz.id);
   const [hours, prods, media, revs, camps, staff] = await Promise.all([
     client.from("business_hours").select("*").eq("business_id", businessId),
-    client.from("products").select("*").eq("business_id", businessId),
+    // Pasif ürünler müşteri menüsünde/gizli sayfada görünmez (YÖNETİM paneli tümünü gösterir).
+    client.from("products").select("*").eq("business_id", businessId).eq("active", true),
     client.from("business_media").select("*").eq("business_id", businessId),
     client.from("reviews").select("*").eq("business_id", businessId).order("created_at", { ascending: false }),
     client.from("campaigns").select(CARD_SELECT).eq("business_id", businessId).eq("status", "PUBLISHED"),
@@ -295,6 +303,9 @@ export async function getBusinessBySlug(slug: string) {
       discountPriceCents: p.discount_price_cents == null ? null : n(p.discount_price_cents),
       // FAZ 12B — adrese teslim (paket servis) fiyatı; boşsa işletme içi fiyat geçerli.
       deliveryPriceCents: p.delivery_price_cents == null ? null : n(p.delivery_price_cents),
+      // FAZ 12C — ürün notları/ekstraları + ürün bazlı KDV (null → işletme varsayılanı).
+      options: Array.isArray(p.options) ? (p.options as unknown[]).map((o) => String(o)).slice(0, 20) : [],
+      kdvRate: p.kdv_rate == null ? null : n(p.kdv_rate),
       category: nul(p.category),
       imageUrl: nul(p.image_url),
       active: Boolean(p.active),
@@ -443,8 +454,13 @@ export async function getCustomerData(userId: string) {
         id: str(o.id),
         businessName: nul(ob.name) ?? "İşletme",
         businessDistrict: nul(ob.district),
-        items: (o.items as Array<{ name?: string; qty?: number; unitPriceCents?: number }>) ?? [],
+        items: (o.items as Array<{ name?: string; qty?: number; unitPriceCents?: number; options?: Array<{ name?: string; wanted?: boolean }> }>) ?? [],
         totalCents: n(o.total_cents),
+        // FAZ 12C — döküm: matrah − kampanya indirimi + KDV = ödenecek.
+        subtotalCents: n(o.subtotal_cents),
+        discountCents: n(o.discount_cents),
+        kdvCents: n(o.kdv_cents),
+        campaignTitle: nul(o.campaign_title),
         paymentMethod: str(o.payment_method),
         deliveryType: str(o.delivery_type) || "PAKET_SERVIS",
         source: str(o.source),
@@ -540,7 +556,9 @@ export async function getBusinessData(businessId: string, days = 14) {
       client.rpc("dv_customer_labels", { p_business_id: businessId }),
       client.rpc("dv_referral_total_count"),
       // AI içeriği işletme profili + ÜRÜN/HİZMET verisine göre uyarlanır (istek: c).
-      client.from("products").select("name, price_cents, discount_price_cents, image_url").eq("business_id", businessId).eq("active", true).limit(50),
+      // Ürünler bölümü: tüm kolonlar gerekir (id, kategori, iki fiyat, aktiflik).
+      // Yalnız aktif olanlar değil — pasif ürünü de yönetmek gerekir.
+      client.from("products").select("*").eq("business_id", businessId).order("name", { ascending: true }).limit(200),
       client.from("business_services").select("name, price_cents").eq("business_id", businessId).eq("active", true).limit(50),
       // AI Büyüme Asistanı — öneriler (20.10.2026 isteği); migration 0010.
       client.from("growth_recommendations").select("*").eq("business_id", businessId).order("created_at", { ascending: false }).limit(30),
@@ -605,6 +623,9 @@ export async function getBusinessData(businessId: string, days = 14) {
       discountPriceCents: p.discount_price_cents == null ? null : n(p.discount_price_cents),
       // FAZ 12B — adrese teslim fiyatı (boşsa işletme içi fiyat geçerlidir).
       deliveryPriceCents: p.delivery_price_cents == null ? null : n(p.delivery_price_cents),
+      // FAZ 12C — ürün notları/ekstraları + ürün bazlı KDV (null → işletme varsayılanı).
+      options: Array.isArray(p.options) ? (p.options as unknown[]).map((o) => String(o)).slice(0, 20) : [],
+      kdvRate: p.kdv_rate == null ? null : n(p.kdv_rate),
       category: nul(p.category),
       imageUrl: nul(p.image_url),
       active: Boolean(p.active),
@@ -618,8 +639,13 @@ export async function getBusinessData(businessId: string, days = 14) {
       customerDistrict: nul(o.customer_district),
       address: nul(o.address),
       note: nul(o.note),
-      items: (o.items as Array<{ name?: string; qty?: number; unitPriceCents?: number }>) ?? [],
+      items: (o.items as Array<{ name?: string; qty?: number; unitPriceCents?: number; options?: Array<{ name?: string; wanted?: boolean }> }>) ?? [],
       totalCents: n(o.total_cents),
+      // FAZ 12C — döküm: matrah − kampanya indirimi + KDV = ödenecek.
+      subtotalCents: n(o.subtotal_cents),
+      discountCents: n(o.discount_cents),
+      kdvCents: n(o.kdv_cents),
+      campaignTitle: nul(o.campaign_title),
       paymentMethod: str(o.payment_method),
       deliveryType: str(o.delivery_type) || "PAKET_SERVIS",
       source: str(o.source),
@@ -897,8 +923,13 @@ export async function getAdminData() {
       businessName: str(bizRows.find((x) => str(x.id) === str(o.business_id))?.name ?? "—"),
       customerName: str(o.customer_name),
       customerPhone: str(o.customer_phone),
-      items: (o.items as Array<{ name?: string; qty?: number }>) ?? [],
+      items: (o.items as Array<{ name?: string; qty?: number; unitPriceCents?: number; options?: Array<{ name?: string; wanted?: boolean }> }>) ?? [],
       totalCents: n(o.total_cents),
+      // FAZ 12C — döküm.
+      subtotalCents: n(o.subtotal_cents),
+      discountCents: n(o.discount_cents),
+      kdvCents: n(o.kdv_cents),
+      campaignTitle: nul(o.campaign_title),
       paymentMethod: str(o.payment_method),
       deliveryType: str(o.delivery_type) || "PAKET_SERVIS",
       source: str(o.source),

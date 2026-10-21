@@ -251,10 +251,20 @@ export default function AdminDashboard({ data, lang, currency, section, affiliat
                   <tr key={o.id}>
                     <Td strong>{o.businessName}</Td>
                     <Td>{o.customerName}<br /><span className="text-[0.76rem] text-muted">{o.customerPhone}</span></Td>
-                    <Td><span className="text-[0.8rem]">{o.items.map((it) => `${it.qty ?? 1}× ${it.name}`).join(", ")}</span></Td>
-                    <Td right><span className="tabular">{money(o.totalCents, currency, lang)}</span></Td>
-                    <Td>{o.deliveryType === "GEL_AL" ? (o.paymentMethod === "CARD_DOOR" ? "İş yerinde kart" : "İş yerinde nakit") : (o.paymentMethod === "CARD_DOOR" ? "Kapıda kart" : "Kapıda nakit")}</Td>
-                    <Td>{o.deliveryType === "GEL_AL" ? <Badge tone="positive">Gel-al</Badge> : <Badge tone="neutral">Paket servis</Badge>}</Td>
+                    <Td><span className="text-[0.8rem]">{o.items.map((it) => `${it.qty ?? 1}× ${it.name}${Array.isArray((it as { options?: unknown }).options) && ((it as { options?: unknown[] }).options)?.length ? ` [${((it as { options?: Array<{ name?: string; wanted?: boolean }> }).options ?? []).map((op) => `${op.name}${op.wanted === false ? " ✕" : ""}`).join(", ")}]` : ""}`).join(", ")}</span></Td>
+                    <Td right>
+                      <span className="tabular">{money(o.totalCents, currency, lang)}</span>
+                      {/* FAZ 12C — döküm (indirim/KDV varsa). */}
+                      {(o as { discountCents?: number }).discountCents || (o as { kdvCents?: number }).kdvCents ? (
+                        <span className="mt-0.5 block text-[0.7rem] tabular text-muted">
+                          matrah {Math.round(((o as { subtotalCents?: number }).subtotalCents ?? o.totalCents) / 100)} ₺
+                          {((o as { discountCents?: number }).discountCents ?? 0) > 0 ? ` · −${Math.round(((o as { discountCents?: number }).discountCents ?? 0) / 100)} ₺` : ""}
+                          {" · "}+{Math.round(((o as { kdvCents?: number }).kdvCents ?? 0) / 100)} ₺ KDV
+                        </span>
+                      ) : null}
+                    </Td>
+                    <Td>{o.deliveryType === "PAKET_SERVIS" ? (o.paymentMethod === "CARD_DOOR" ? "Kapıda kart" : "Kapıda nakit") : (o.paymentMethod === "CARD_DOOR" ? "İş yerinde kart" : "İş yerinde nakit")}</Td>
+                    <Td>{o.deliveryType === "GEL_AL" ? <Badge tone="positive">Gel-al</Badge> : o.deliveryType === "REZERVE" ? <Badge tone="accent">Rezerve</Badge> : <Badge tone="neutral">Paket servis</Badge>}</Td>
                     <Td>{o.source === "VOICE" ? <Badge tone="accent">Sesli</Badge> : <Badge tone="neutral">Web</Badge>}</Td>
                     <Td><Badge tone={o.status === "NEW" ? "warning" : o.status === "COMPLETED" ? "positive" : ["REJECTED", "CANCELLED"].includes(o.status) ? "neutral" : "accent"}>{o.status}</Badge></Td>
                     <Td>{shortDate(new Date(o.createdAt))}</Td>

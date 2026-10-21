@@ -34,6 +34,16 @@ export type BusinessRow = {
   verified: boolean;
   featured: boolean;
   createdAt: Date;
+  /** FAZ 12C — sipariş modları (işaretlenenler açık; varsayılan kapalı). */
+  modeGelAl: boolean;
+  modePaketServis: boolean;
+  modeRezerve: boolean;
+  /** FAZ 12C — "sipariş alıyorum" anahtarı (yoğunlukta durdurma). */
+  acceptingOrders: boolean;
+  /** FAZ 12C — sipariş fişi otomatik yazdırma. */
+  orderAutoprint: boolean;
+  /** FAZ 12C — işletme varsayılan KDV oranı (%) — 0/1/10/18/20. */
+  kdvRate: number;
 };
 
 export type CampaignCard = {

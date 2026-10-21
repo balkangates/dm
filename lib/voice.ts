@@ -96,7 +96,8 @@ export type VoiceStep = {
   state: VoiceState;
   say: string;
   ui: VoiceUi;
-  campaigns?: Array<{ title: string; discountLabel: string }>;
+  /** FAZ 12C-2: kart nesnesi de taşınır — tıklanınca TEK kampanya sesli anlatılır. */
+  campaigns?: Array<{ title: string; discountLabel: string; campaign?: VoiceCampaign }>;
   products?: Array<{ name: string; priceLabel: string }>;
 };
 
@@ -408,6 +409,7 @@ function campaignsView(ctx: VoiceCtx, mode: VoiceMode | null): VoiceStep {
   }
   const views = list.map((c) => ({
     title: c.title,
+    campaign: c,
     discountLabel:
       (c.discountPercent
         ? `%${c.discountPercent} indirim`
@@ -436,23 +438,30 @@ function productsView(ctx: VoiceCtx, mode: VoiceMode | null, stage: VoiceStage =
     };
   }
   const views = list.map((p) => {
-    const base = tl(p.discountPriceCents ?? p.priceCents);
-    const delivery = p.deliveryPriceCents != null ? tl(p.deliveryPriceCents) : null;
-    const label =
-      mode === "PAKET_SERVIS" && delivery
-        ? `${delivery} (adrese teslim)`
-        : mode === "GEL_AL" || mode === "REZERVE"
-          ? `${base} (işletme içi)`
-          : delivery && delivery !== base
-            ? `${base} / ${delivery} adrese teslim`
-            : base;
+    // FAZ 12C-2: mod seçildiyse YALNIZ o modun tek fiyatı gösterilir (yan yana çift fiyat kafa karıştırır).
+    const label = mode ? tl(modePrice(p, mode)) : tl(p.discountPriceCents ?? p.priceCents);
     return { name: p.name, priceLabel: label };
   });
+  const scope = mode ? `${MODE_LABELS[mode]} fiyatlarıyla` : "";
   const say =
-    `Menüden ilk ${list.length} ürün: ` +
+    `Menüden ilk ${list.length} ürün${scope ? `, ${scope}` : ""}: ` +
     views.map((v) => `${v.name}, ${v.priceLabel}`).join("; ") +
     ".";
   return { state: { ...initialVoiceState(), stage }, say, ui: "products", products: views };
+}
+
+/** FAZ 12C-2 — tıklanılan TEK kampanyanın sesli anlatımı (işitme/görme güçlüğü olanlar için). */
+export function announceCampaign(c: VoiceCampaign, ctx: VoiceCtx): string {
+  const scope =
+    !c.serviceMode || c.serviceMode === "ALL" ? "tüm sipariş tiplerinde"
+    : c.serviceMode === "GEL_AL" ? "yalnız gel-al siparişlerinde"
+    : c.serviceMode === "REZERVE" ? "yalnız rezerve siparişlerinde"
+    : c.serviceMode === "PAKET_SERVIS" ? "yalnız adrese teslim siparişlerinde"
+    : "";
+  const disc = c.discountPercent ? `%${c.discountPercent} indirim` : c.discountAmountCents ? `${tl(c.discountAmountCents)} indirim` : "detaylar aşağıda";
+  const min = c.minBasketCents ? ` Minimum sepet ${tl(c.minBasketCents)}.` : "";
+  const dates = c.endsAt ? ` Geçerlilik: ${String(c.endsAt).slice(0, 10)} tarihine kadar.` : "";
+  return `${c.title}: ${disc}${scope ? `, ${scope}` : ""}.${min}${dates} Kampanya ${ctx.businessName} işletmesinde geçerlidir.`;
 }
 
 function askNextDetail(s: VoiceState): { say: string; ui: VoiceUi; state: VoiceState } {
@@ -518,7 +527,20 @@ export function handleVoice(input: string, state: VoiceState, ctx: VoiceCtx): Vo
   if (state.stage === "menu") {
     const intent = detectIntent(t);
     if (intent === "CAMPAIGNS") return campaignsView(ctx, null);
-    if (intent === "PRODUCTS") return productsView(ctx, null);
+    // FAZ 12C-2: "menü" seçildiğinde ÖNCE sipariş tipi sorulur (tek mod açıksa doğrudan o modun menüsü açılır).
+    if (intent === "PRODUCTS") {
+      // productsView taze bir state döndürür; ad/telefon/sepet/mode KAYBEDİLMESİN diye mevcut state korunur.
+      if (state.mode && modeEnabled(ctx, state.mode))
+        return { ...productsView(ctx, state.mode, state.stage), state: { ...state, stage: state.stage, mode: state.mode } };
+      const ms = enabledModes(ctx);
+      if (ms.length === 1)
+        return { ...productsView(ctx, ms[0], state.stage), state: { ...state, stage: state.stage, mode: ms[0] } };
+      return {
+        state: { ...state, stage: "delivery" },
+        say: `Önce sipariş tipini seç — ${modesPhrase(ctx)}? Seçtiğin tipe göre menüyü tek fiyatla gösteririm.`,
+        ui: "delivery",
+      };
+    }
     if (intent === "GREETING" || intent === "HELP") return { state, say: capabilities(ctx.businessName, ctx), ui: "menu" };
     const modeInUtterance = detectDeliveryMode(t);
     const gate = orderGate(ctx, modeInUtterance);
@@ -528,7 +550,8 @@ export function handleVoice(input: string, state: VoiceState, ctx: VoiceCtx): Vo
     const effMode: VoiceMode | null = modeInUtterance ?? (ms.length === 1 ? ms[0] : state.mode);
     const direct = matchProductsDetailed(t, ctx.products, effMode);
     attachOptions(direct, t, ctx);
-    if (direct.length || intent === "ORDER") {
+    // FAZ 12C-2: yalnız "gel al" / "rezerve" / "adrese teslim" söylenirse de sipariş başlar.
+    if (direct.length || intent === "ORDER" || modeInUtterance) {
       if (effMode && modeEnabled(ctx, effMode) && (modeInUtterance || ms.length === 1)) {
         const askQty = direct.find((l) => !l.qtyExplicit);
         const cart = mergeLines(state.cart, stripFlags(direct));
@@ -545,8 +568,9 @@ export function handleVoice(input: string, state: VoiceState, ctx: VoiceCtx): Vo
             ? askQty
               ? `Tamam, ${modeWord(effMode)}. Sepete ekledim: ${cartSummary(next)}. ${askQty.name} için adet ne olsun?`
               : `Tamam, ${modeWord(effMode)}. Sepete ekledim: ${cartSummary(next)}. ${totalSay(next, ctx)}. Onaylıyor musun, ürün de ekleyebilirsin.`
-            : `Tamam, ${modeWord(effMode)} siparişini alırım. Ne istersin? Örneğin: üç tavuk dürüm döner, iki ayran.`,
-          ui: askQty ? "qty" : "cart",
+            : `Tamam, ${modeWord(effMode)} siparişini alırım. Menü karşında — adet seçip sepete ekleyebilir ya da istediğini söyleyebilirsin.`,
+          // FAZ 12C-2: sepet boşken liste açılır (manuel adet/sepete ekle).
+          ui: askQty ? "qty" : cart.length ? "cart" : "products",
         };
       }
       return {
@@ -593,8 +617,9 @@ export function handleVoice(input: string, state: VoiceState, ctx: VoiceCtx): Vo
         ? askQty
           ? `Tamam, ${modeWord(mode)}. Ekledim: ${cartSummary(next)}. ${askQty.name} için adet ne olsun?`
           : `Tamam, ${modeWord(mode)}. Ekledim: ${cartSummary(next)}. ${totalSay(next, ctx)}. Onaylıyor musun?`
-        : `Tamam, ${modeWord(mode)} sipariş. Menüden ne istersin? Örneğin: üç tavuk dürüm döner.`,
-      ui: askQty ? "qty" : "cart",
+        // FAZ 12C-2: mod seçilince ÜRÜN LİSTESİ açılır (adet/sepete ekle ile manuel seçim).
+        : `Tamam, ${modeWord(mode)} sipariş. Menü karşında — adet seçip sepete ekleyebilir ya da istediğini söyleyebilirsin.`,
+      ui: askQty ? "qty" : cart.length ? "cart" : "products",
     };
   }
 
@@ -716,10 +741,10 @@ export function handleVoice(input: string, state: VoiceState, ctx: VoiceCtx): Vo
     if (isConfirm(t)) {
       const sonuc =
         state.mode === "PAKET_SERVIS"
-          ? `Siparişin ${ctx.businessName} işletmesine iletildi! İşletme onaylayınca hazırlanacak ve adresine yollanacak; ödemeyi kapıda ${paymentLabel(state.payment, state.mode)} yapacaksın.`
+          ? `Siparişin ${ctx.businessName} işletmesine iletildi! İşletme onaylayınca hazırlanacak ve adresine yollanacak; ödemeyi kapıda ${paymentLabel(state.payment, state.mode)} yapacaksın. Siparişiniz alınmıştır. İyi günler dileriz.`
           : state.mode === "REZERVE"
-            ? `Rezerve siparişin ${ctx.businessName} işletmesine iletildi! Belirttiğin zamanda gelip alacaksın; ödemeyi iş yerinde ${paymentLabel(state.payment, state.mode)} yapacaksın.`
-            : `Siparişin ${ctx.businessName} işletmesine iletildi! Hazır olunca gelip alacaksın; ödemeyi iş yerinde ${paymentLabel(state.payment, state.mode)} yapacaksın.`;
+            ? `Rezerve siparişin ${ctx.businessName} işletmesine iletildi! Belirttiğin zamanda gelip alacaksın; ödemeyi iş yerinde ${paymentLabel(state.payment, state.mode)} yapacaksın. Siparişiniz alınmıştır. İyi günler dileriz.`
+            : `Siparişin ${ctx.businessName} işletmesine iletildi! Hazır olunca gelip alacaksın; ödemeyi iş yerinde ${paymentLabel(state.payment, state.mode)} yapacaksın. Siparişiniz alınmıştır. İyi günler dileriz.`;
       return { state: { ...state, stage: "done" }, say: sonuc, ui: "done" };
     }
     return { state, say: "Siparişi onaylıyor musun? 'Evet' de yeterli.", ui: "confirm" };

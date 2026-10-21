@@ -22,12 +22,20 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { usePathname } from "next/navigation";
 import { Button, Input, useToast } from "@/components/ds";
 import {
-  applyConfirm, applyDetails, applyPayment, cartBreakdown, enabledModes, handleVoice, initialVoiceState, MODE_LABELS,
-  type VoiceCampaign, type VoiceCtx, type VoicePayment, type VoiceProduct, type VoiceState, type VoiceUi,
+  applyConfirm, applyDetails, applyMode, applyPayment, announceCampaign, cartBreakdown, enabledModes, handleVoice,
+  initialVoiceState, MODE_LABELS, modePrice,
+  type VoiceCampaign, type VoiceCtx, type VoiceMode, type VoicePayment, type VoiceProduct, type VoiceState, type VoiceUi,
 } from "@/lib/voice";
 import { breakdownLines } from "@/lib/order-price";
 
 type Msg = { who: "ai" | "me"; text: string };
+
+/** FAZ 12C-2 — çiplerde yan yana görünen kısa mod etiketleri. */
+const SHORT_MODE: Record<VoiceMode, string> = {
+  GEL_AL: "Gel-al",
+  PAKET_SERVIS: "Adrese teslim",
+  REZERVE: "Rezerve",
+};
 
 type Rec = {
   lang: string;
@@ -82,8 +90,9 @@ export default function VoiceAssistant({
   const [sending, setSending] = useState(false);
   const [orderId, setOrderId] = useState<string | null>(null);
   const [lastBreakdown, setLastBreakdown] = useState<ReturnType<typeof cartBreakdown> | null>(null);
-  const [campaignViews, setCampaignViews] = useState<Array<{ title: string; discountLabel: string }>>([]);
-  const [productViews, setProductViews] = useState<Array<{ name: string; priceLabel: string }>>([]);
+  const [campaignViews, setCampaignViews] = useState<Array<{ title: string; discountLabel: string; campaign?: VoiceCampaign }>>([]);
+  /** FAZ 12C-2 — ürün listesindeki satır bazlı adet seçici (manuel sipariş). */
+  const [qtyPick, setQtyPick] = useState<Record<string, number>>({});
   const [form, setForm] = useState({ name: user?.name ?? "", phone: "", address: "" });
   const toast = useToast();
   const pathname = usePathname();
@@ -143,13 +152,95 @@ export default function VoiceAssistant({
       vStateRef.current = step.state;
       setUi(step.ui);
       if (step.campaigns) setCampaignViews(step.campaigns);
-      if (step.products) setProductViews(step.products);
       setLastBreakdown(step.state.cart.length ? cartBreakdown(step.state, ctxRef.current) : null);
       push("ai", step.say);
       speak(step.say);
     },
     [push, speak],
   );
+
+  /* ---------------- FAZ 12C-2 — manuel sipariş fonksiyonları (ses zorunlu değil) ---------------- */
+
+  /** Mod butonu/çipi: mod uygulanır ve ÜRÜN LİSTESİ açılır. */
+  function chooseMode(m: VoiceMode) {
+    const base = applyMode(vStateRef.current, m, ctxRef.current);
+    const next: VoiceState = { ...base, stage: "ordering" };
+    setVState(next);
+    vStateRef.current = next;
+    setLastBreakdown(next.cart.length ? cartBreakdown(next, ctxRef.current) : null);
+    setUi("products");
+    const say = next.cart.length
+      ? `Tamam, siparişin ${MODE_LABELS[m].toLocaleLowerCase("tr-TR")} olarak güncellendi; fiyatlar yenilendi.`
+      : `Tamam, ${MODE_LABELS[m].toLocaleLowerCase("tr-TR")} menüsü açıldı. Listeden adet seçip Sepete ekle ile sipariş listene ekleyebilirsin.`;
+    push("ai", say);
+    speak(say);
+  }
+
+  /** Ürün satırındaki adetle sepete ekle (aynı isimsiz satır birleşir). */
+  function addToCart(p: VoiceProduct, qty: number) {
+    const cur = vStateRef.current;
+    const mode = cur.mode ?? (modeList.length === 1 ? modeList[0] : null);
+    if (!mode) {
+      setUi("delivery");
+      toast.push({ title: "Önce sipariş tipi seç", desc: "Gel-al, adrese teslim veya rezerve — listede fiyatlar ona göre görünür.", tone: "warning" });
+      return;
+    }
+    const unit = modePrice(p, mode);
+    const cart = [...cur.cart];
+    const ex = cart.find((l) => l.name === p.name && !l.options?.length);
+    if (ex) ex.qty += qty;
+    else cart.push({ name: p.name, qty, unitPriceCents: unit });
+    const next: VoiceState = { ...cur, mode, cart, stage: "ordering" };
+    setVState(next);
+    vStateRef.current = next;
+    setLastBreakdown(cartBreakdown(next, ctxRef.current));
+    setQtyPick((q) => ({ ...q, [p.name]: 1 }));
+    toast.push({ title: `${qty} × ${p.name} sepete eklendi`, desc: "Sepeti görüp ödeme seçebilirsin.", tone: "positive" });
+  }
+
+  function removeFromCart(idx: number) {
+    const cur = vStateRef.current;
+    const cart = cur.cart.filter((_, i) => i !== idx);
+    const next: VoiceState = { ...cur, cart };
+    setVState(next);
+    vStateRef.current = next;
+    setLastBreakdown(cart.length ? cartBreakdown(next, ctxRef.current) : null);
+    toast.push({ title: "Sepetten çıkarıldı", tone: "neutral" });
+  }
+
+  /** Sepetteki ödeme seçimi (manuel). */
+  function pickPayment(m: VoicePayment) {
+    const next = applyPayment(vStateRef.current, m);
+    setVState(next);
+    vStateRef.current = next;
+    setLastBreakdown(cartBreakdown(next, ctxRef.current));
+    setUi("cart");
+    const say = `${m === "CARD_DOOR" ? "Kart" : "Nakit"} ödeme seçildi (${yer}). Sepeti kontrol edip "Sipariş ver" ile gönderebilirsin.`;
+    push("ai", say);
+    speak(say);
+  }
+
+  /** Sepetteki "Sipariş ver": eksik bilgi → form; ödeme yok → uyar; doluysa gönder. */
+  function manualSend() {
+    const s = vStateRef.current;
+    if (!s.cart.length) {
+      toast.push({ title: "Sepet boş", desc: "Menüden ürün ekleyip tekrar dene.", tone: "warning" });
+      return;
+    }
+    if (!s.name || !s.phone || (s.mode === "PAKET_SERVIS" && !s.address)) {
+      setForm({ name: s.name || form.name, phone: s.phone || form.phone, address: s.address || form.address });
+      setUi("details");
+      const say = `Önce teslimat bilgilerini doldur — ad, telefon${s.mode === "PAKET_SERVIS" ? " ve adres" : ""}.`;
+      push("ai", say);
+      speak(say);
+      return;
+    }
+    if (!s.payment) {
+      toast.push({ title: "Ödeme yöntemini seç", desc: "Nakit veya kart seçtikten sonra siparişi gönderebilirsin.", tone: "warning" });
+      return;
+    }
+    void submit();
+  }
 
   function toggleOpen() {
     const next = !open;
@@ -254,10 +345,10 @@ export default function VoiceAssistant({
       setUi("done");
       const say =
         s.mode === "PAKET_SERVIS"
-          ? `Siparişin ${business.name} işletmesine iletildi! İşletme onaylayınca hazırlanacak ve adresine yollanacak; ödemeyi kapıda yapacaksın.`
+          ? `Siparişin ${business.name} işletmesine iletildi! İşletme onaylayınca hazırlanacak ve adresine yollanacak; ödemeyi kapıda yapacaksın. Siparişiniz alınmıştır. İyi günler dileriz.`
           : s.mode === "REZERVE"
-            ? `Rezerve siparişin ${business.name} işletmesine iletildi! Belirttiğin zamanda gelip alacaksın; ödemeyi iş yerinde yapacaksın.`
-            : `Siparişin ${business.name} işletmesine iletildi! Hazır olunca gelip alırsın; ödemeyi iş yerinde yapacaksın.`;
+            ? `Rezerve siparişin ${business.name} işletmesine iletildi! Belirttiğin zamanda gelip alacaksın; ödemeyi iş yerinde yapacaksın. Siparişiniz alınmıştır. İyi günler dileriz.`
+            : `Siparişin ${business.name} işletmesine iletildi! Hazır olunca gelip alırsın; ödemeyi iş yerinde yapacaksın. Siparişiniz alınmıştır. İyi günler dileriz.`;
       push("ai", say);
       speak(say);
     } catch {
@@ -305,25 +396,89 @@ export default function VoiceAssistant({
 
             {ui === "campaigns" && campaignViews.length ? (
               <div className="space-y-1.5 pt-1">
+                <p className="text-[0.7rem] leading-snug text-muted">Bir kampanyaya dokun; seçtiğin kampanyayı sesli tekrarlayayım (işitme güçlüğü için).</p>
                 {campaignViews.map((c, i) => (
-                  <div key={i} className="rounded-[4px] border border-line bg-canvas px-3 py-2">
+                  <button
+                    key={i}
+                    onClick={() => {
+                      if (!c.campaign) return;
+                      const t = announceCampaign(c.campaign, ctxRef.current);
+                      push("ai", t);
+                      speak(t);
+                    }}
+                    className="w-full rounded-[4px] border border-line bg-canvas px-3 py-2 text-left transition-colors hover:border-accent/60 hover:bg-accent/5"
+                  >
                     <p className="text-[0.85rem] font-semibold">{c.title}</p>
                     <p className="text-[0.76rem] text-accent">{c.discountLabel}</p>
-                  </div>
+                    <p className="mt-0.5 text-[0.68rem] text-muted">Dinlemek için dokun ▶</p>
+                  </button>
                 ))}
               </div>
             ) : null}
 
-            {ui === "products" && productViews.length ? (
-              <div className="space-y-1 pt-1">
-                {productViews.map((p, i) => (
-                  <div key={i} className="flex justify-between rounded-[4px] border border-line bg-canvas px-3 py-1.5 text-[0.84rem]">
-                    <span>{p.name}</span><span className="tabular font-semibold">{p.priceLabel}</span>
+            {ui === "products" ? (
+              <div className="space-y-2 pt-1">
+                {/* Sipariş tipi — yan yana, yalnız açık olanlar (FAZ 12C-2) */}
+                <div className="flex flex-wrap gap-1.5">
+                  {(Object.keys(SHORT_MODE) as VoiceMode[]).filter((m) => modeList.includes(m)).map((m) => (
+                    <button
+                      key={m}
+                      onClick={() => chooseMode(m)}
+                      className={`rounded-full border px-2.5 py-1 text-[0.74rem] transition-colors ${vState.mode === m ? "border-accent bg-accent/10 font-semibold text-ink" : "border-line bg-canvas text-muted hover:text-ink"}`}
+                    >
+                      {SHORT_MODE[m]}
+                    </button>
+                  ))}
+                </div>
+                <p className="text-[0.7rem] leading-snug text-muted">
+                  {vState.mode ? <><strong className="text-ink">{MODE_LABELS[vState.mode]}</strong> fiyatları — tek fiyat gösterilir.</> : "Önce sipariş tipini seç; fiyatlar ona göre görünür."} Adet seç, “Sepete ekle” ile listene ekle.
+                </p>
+
+                {products.length ? (
+                  <div className="space-y-1.5">
+                    {products.map((p) => {
+                      const price = modePrice(p, vState.mode);
+                      const q = qtyPick[p.name] ?? 1;
+                      return (
+                        <div key={p.name} className="rounded-[4px] border border-line bg-canvas px-3 py-2">
+                          <div className="flex items-start justify-between gap-2">
+                            <span className="text-[0.85rem] font-medium leading-snug">{p.name}</span>
+                            <span className="tabular shrink-0 text-[0.85rem] font-semibold">{Math.round(price / 100)} ₺</span>
+                          </div>
+                          <div className="mt-1.5 flex items-center justify-between gap-2">
+                            <div className="flex items-center gap-1.5">
+                              <button
+                                aria-label={`${p.name} adedini azalt`}
+                                onClick={() => setQtyPick((s) => ({ ...s, [p.name]: Math.max(1, q - 1) }))}
+                                className="flex h-7 w-7 items-center justify-center rounded-full border border-line bg-canvas text-[0.95rem] leading-none text-ink transition-colors hover:border-accent"
+                              >−</button>
+                              <span className="tabular w-5 text-center text-[0.85rem] font-semibold">{q}</span>
+                              <button
+                                aria-label={`${p.name} adedini artır`}
+                                onClick={() => setQtyPick((s) => ({ ...s, [p.name]: Math.min(20, q + 1) }))}
+                                className="flex h-7 w-7 items-center justify-center rounded-full border border-line bg-canvas text-[0.95rem] leading-none text-ink transition-colors hover:border-accent"
+                              >+</button>
+                            </div>
+                            <Button size="sm" variant="secondary" onClick={() => addToCart(p, q)}>Sepete ekle</Button>
+                          </div>
+                        </div>
+                      );
+                    })}
                   </div>
-                ))}
-                {!user ? loginBtn : (
-                  <Button size="sm" variant="secondary" className="mt-1" onClick={() => run("sipariş vermek istiyorum")}>Sipariş ver</Button>
+                ) : (
+                  <p className="text-[0.84rem] text-muted">Bu işletmede şu an ürün yok; kampanyalara bakabilirsin.</p>
                 )}
+
+                {/* Sepet barı */}
+                <div className="flex items-center justify-between gap-2 rounded-[4px] border border-accent/40 bg-accent/5 px-3 py-2">
+                  <span className="text-[0.8rem]">
+                    <strong>Sepet: {vState.cart.reduce((s, l) => s + l.qty, 0)} ürün</strong>
+                    {bd ? <> · {Math.round(bd.totalCents / 100)} ₺</> : null}
+                  </span>
+                  <div className="flex gap-1.5">
+                    {vState.cart.length ? <Button size="sm" onClick={() => setUi("cart")}>Sepeti gör</Button> : null}
+                  </div>
+                </div>
               </div>
             ) : null}
 
@@ -336,39 +491,40 @@ export default function VoiceAssistant({
 
             {ui === "delivery" ? (
               <div className="space-y-2 rounded-[4px] border border-line bg-canvas p-3">
-                <p className="text-[0.7rem] font-semibold uppercase tracking-[0.1em] text-muted">Sipariş tipi</p>
-                {!user ? loginBtn : null}
+                <p className="text-[0.7rem] font-semibold uppercase tracking-[0.1em] text-muted">Sipariş tipi — hangisiyle ilerleyelim?</p>
                 <div className="flex flex-wrap gap-2">
-                  {modeList.includes("GEL_AL") ? (
-                    <Button size="sm" variant={vState.mode === "GEL_AL" ? "primary" : "secondary"} onClick={() => run("gel al")}>Gel-al / işletme içi</Button>
-                  ) : null}
-                  {modeList.includes("REZERVE") ? (
-                    <Button size="sm" variant={vState.mode === "REZERVE" ? "primary" : "secondary"} onClick={() => run("rezerve")}>Rezerve (ileri tarihli)</Button>
-                  ) : null}
-                  {modeList.includes("PAKET_SERVIS") ? (
-                    <Button size="sm" variant={vState.mode === "PAKET_SERVIS" ? "primary" : "secondary"} onClick={() => run("adrese teslim")}>Adrese teslim (paket servis)</Button>
-                  ) : null}
+                  {(Object.keys(SHORT_MODE) as VoiceMode[]).filter((m) => modeList.includes(m)).map((m) => (
+                    <Button key={m} size="sm" variant={vState.mode === m ? "primary" : "secondary"} onClick={() => chooseMode(m)}>
+                      {SHORT_MODE[m]}
+                    </Button>
+                  ))}
                 </div>
-                <p className="text-[0.78rem] leading-snug text-muted">Fiyatlar sipariş tipine göre değişebilir; adrese teslimde teslimat adresi istenir.</p>
+                <p className="text-[0.78rem] leading-snug text-muted">Seçtiğin tipe göre menü ve fiyatlar tek olarak gösterilir; adrese teslimde adres istenir.</p>
               </div>
             ) : null}
 
             {ui === "cart" ? (
               <div className="rounded-[4px] border border-line bg-canvas p-3">
-                <p className="text-[0.7rem] font-semibold uppercase tracking-[0.1em] text-muted">Sepet</p>
+                <div className="flex items-center justify-between">
+                  <p className="text-[0.7rem] font-semibold uppercase tracking-[0.1em] text-muted">Sepet</p>
+                  <button onClick={() => setUi("products")} className="text-[0.72rem] text-accent underline">menüye dön</button>
+                </div>
                 {vState.mode ? (
                   <p className="mt-0.5 text-[0.78rem] text-accent">
                     {MODE_LABELS[vState.mode]} ·{" "}
-                    <button className="underline" onClick={() => run(modeList.length > 1 ? (vState.mode === "PAKET_SERVIS" ? "gel al" : "adrese teslim") : "menü")}>değiştir</button>
+                    <button className="underline" onClick={() => setUi("delivery")}>tipi değiştir</button>
                   </p>
                 ) : null}
                 {vState.cart.length ? (
-                  <ul className="mt-1.5 space-y-1">
+                  <ul className="mt-1.5 space-y-1.5">
                     {vState.cart.map((l, i) => (
                       <li key={i} className="text-[0.85rem]">
-                        <div className="flex justify-between">
+                        <div className="flex items-center justify-between gap-2">
                           <span>{l.qty} × {l.name}</span>
-                          <span className="tabular">{Math.round((l.qty * l.unitPriceCents) / 100)} ₺</span>
+                          <span className="flex items-center gap-2">
+                            <span className="tabular font-semibold">{Math.round((l.qty * l.unitPriceCents) / 100)} ₺</span>
+                            <button aria-label={`${l.name} sepetten çıkar`} onClick={() => removeFromCart(i)} className="text-muted transition-colors hover:text-danger">✕</button>
+                          </span>
                         </div>
                         {l.options?.length ? (
                           <div className="mt-0.5 flex flex-wrap gap-1">
@@ -380,11 +536,11 @@ export default function VoiceAssistant({
                       </li>
                     ))}
                   </ul>
-                ) : <p className="mt-1 text-[0.84rem] text-muted">Sepet boş — ürün adını söyle veya yaz.</p>}
+                ) : <p className="mt-1 text-[0.84rem] text-muted">Sepet boş — menüden ürün ekleyebilir ya da ürün adını söyleyebilirsin.</p>}
                 {bd && vState.cart.length ? (
                   <div className="mt-2 space-y-0.5 border-t border-line-soft pt-2">
                     {breakdownLines(bd).map((ln, i) => (
-                      <p key={i} className={`flex justify-between text-[0.8rem] ${ln.tone === "discount" ? "text-positive" : ln.tone === "kdv" ? "text-muted" : "text-muted"}`}>
+                      <p key={i} className={`flex justify-between text-[0.8rem] ${ln.tone === "discount" ? "text-positive" : ln.tone === "mid" ? "text-ink-700" : "text-muted"}`}>
                         <span>{ln.label}</span><span className="tabular">{ln.value}</span>
                       </p>
                     ))}
@@ -394,10 +550,29 @@ export default function VoiceAssistant({
                   </div>
                 ) : null}
                 {vState.cart.length ? (
-                  !user ? loginBtn : (
-                    <Button size="sm" className="mt-2" onClick={() => run("onayla")}>Siparişi onayla</Button>
-                  )
-                ) : null}
+                  <div className="mt-2 space-y-2 border-t border-line-soft pt-2">
+                    <div>
+                      <p className="text-[0.7rem] font-semibold uppercase tracking-[0.1em] text-muted">Ödeme seçimi</p>
+                      <div className="mt-1 flex gap-2">
+                        <Button size="sm" variant={vState.payment === "CASH_DOOR" ? "primary" : "secondary"} onClick={() => pickPayment("CASH_DOOR")}>
+                          {yer === "kapıda" ? "Kapıda nakit" : "İş yerinde nakit"}
+                        </Button>
+                        <Button size="sm" variant={vState.payment === "CARD_DOOR" ? "primary" : "secondary"} onClick={() => pickPayment("CARD_DOOR")}>
+                          {yer === "kapıda" ? "Kapıda kart" : "İş yerinde kart"}
+                        </Button>
+                      </div>
+                      {vState.payment ? <p className="mt-1 text-[0.72rem] text-positive">Seçili: {vState.payment === "CARD_DOOR" ? "kart" : "nakit"} ({yer}) ✓</p> : null}
+                    </div>
+                    {!user ? loginBtn : (
+                      <div className="flex gap-2">
+                        <Button size="sm" className="flex-1" loading={sending} onClick={manualSend}>Sipariş ver</Button>
+                        <Button size="sm" variant="secondary" onClick={() => setUi("products")}>Alışverişe devam</Button>
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <Button size="sm" variant="secondary" className="mt-2" onClick={() => setUi("products")}>Menüye gözat</Button>
+                )}
               </div>
             ) : null}
 
@@ -408,15 +583,18 @@ export default function VoiceAssistant({
                 <Input placeholder="Telefon" inputMode="tel" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} />
                 {vState.mode === "PAKET_SERVIS" ? <Input placeholder="Adres (mahalle, sokak, kapı no)" value={form.address} onChange={(e) => setForm({ ...form, address: e.target.value })} /> : null}
                 <Button size="sm" onClick={() => {
+                  if (!form.name.trim() || !form.phone.trim() || (vState.mode === "PAKET_SERVIS" && !form.address.trim())) {
+                    toast.push({ title: "Ad ve telefon zorunlu", desc: vState.mode === "PAKET_SERVIS" ? "Adrese teslimde adres de gerekli." : "Eksik alanları doldur.", tone: "warning" });
+                    return;
+                  }
                   const next = applyDetails(vStateRef.current, form);
                   setVState(next);
                   vStateRef.current = next;
-                  if (next.stage === "payment") {
-                    setUi("payment");
-                    const say = `${next.name}, kaydettim. ${yer === "kapıda" ? "Ödemeyi kapıda" : "Ödemeyi iş yerinde"} nakit mi kartla mı yapacaksın?`;
-                    push("ai", say);
-                    speak(say);
-                  }
+                  setLastBreakdown(next.cart.length ? cartBreakdown(next, ctxRef.current) : null);
+                  setUi("cart");
+                  const say = `${next.name}, kaydettim. Ödeme yöntemini seçip "Sipariş ver" ile gönderebilirsin.`;
+                  push("ai", say);
+                  speak(say);
                 }}>Devam</Button>
               </div>
             ) : null}
@@ -425,20 +603,12 @@ export default function VoiceAssistant({
               <div className="space-y-2 rounded-[4px] border border-line bg-canvas p-3">
                 <p className="text-[0.7rem] font-semibold uppercase tracking-[0.1em] text-muted">{yer === "kapıda" ? "Kapıda ödeme yöntemi" : "İş yerinde ödeme yöntemi"}</p>
                 <div className="flex gap-2">
-                  <Button size="sm" variant={vState.payment === "CASH_DOOR" ? "primary" : "secondary"} onClick={() => {
-                    const next = applyPayment(vStateRef.current, "CASH_DOOR");
-                    setVState(next); vStateRef.current = next; setUi("confirm");
-                    setLastBreakdown(cartBreakdown(next, ctxRef.current));
-                    const say = `${yer === "kapıda" ? "Kapıda" : "İş yerinde"} nakit kaydedildi. Siparişin: ${next.cart.map((l) => `${l.qty} ${l.name}`).join(", ")}. Onaylıyor musun?`;
-                    push("ai", say); speak(say);
-                  }}>{yer === "kapıda" ? "Kapıda nakit" : "İş yerinde nakit"}</Button>
-                  <Button size="sm" variant={vState.payment === "CARD_DOOR" ? "primary" : "secondary"} onClick={() => {
-                    const next = applyPayment(vStateRef.current, "CARD_DOOR");
-                    setVState(next); vStateRef.current = next; setUi("confirm");
-                    setLastBreakdown(cartBreakdown(next, ctxRef.current));
-                    const say = `${yer === "kapıda" ? "Kapıda" : "İş yerinde"} kart kaydedildi. Siparişin: ${next.cart.map((l) => `${l.qty} ${l.name}`).join(", ")}. Onaylıyor musun?`;
-                    push("ai", say); speak(say);
-                  }}>{yer === "kapıda" ? "Kapıda kart" : "İş yerinde kart"}</Button>
+                  <Button size="sm" variant={vState.payment === "CASH_DOOR" ? "primary" : "secondary"} onClick={() => pickPayment("CASH_DOOR")}>
+                    {yer === "kapıda" ? "Kapıda nakit" : "İş yerinde nakit"}
+                  </Button>
+                  <Button size="sm" variant={vState.payment === "CARD_DOOR" ? "primary" : "secondary"} onClick={() => pickPayment("CARD_DOOR")}>
+                    {yer === "kapıda" ? "Kapıda kart" : "İş yerinde kart"}
+                  </Button>
                 </div>
               </div>
             ) : null}
@@ -482,6 +652,7 @@ export default function VoiceAssistant({
             {ui === "done" ? (
               <div className="rounded-[4px] border border-positive/40 bg-canvas p-3">
                 <p className="text-[0.9rem] font-semibold text-positive">Sipariş iletildi ✓</p>
+                <p className="mt-0.5 text-[0.85rem] font-semibold text-ink">Siparişiniz alınmıştır. İyi günler dileriz.</p>
                 {orderId ? <p className="mt-0.5 text-[0.78rem] text-muted">Talep no: {orderId.slice(0, 8)}</p> : null}
                 <p className="mt-1 text-[0.82rem] leading-relaxed text-muted">
                   {vState.mode === "PAKET_SERVIS"

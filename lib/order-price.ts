@@ -47,6 +47,9 @@ export type PriceBreakdown = {
 const cents = (n: unknown) => Math.max(0, Math.round(Number(n ?? 0)));
 
 export function normalizeKdv(rate: unknown, fallback: number): number {
+  // FAZ 12C-2 düzeltmesi: null/undefined (girilmemiş) İŞLETME varsayılanına düşer.
+  // Eski: Number(null) === 0 olduğu için KDV %0 sayılıyordu (yanlış fiyat!).
+  if (rate == null || rate === "") return fallback;
   const r = Number(rate);
   return (KDV_RATES as readonly number[]).includes(r) ? r : fallback;
 }
@@ -149,10 +152,10 @@ export function computeTotals(input: {
   };
 }
 
-/** İnsan-okur döküm satırları (widget/panel/fiş ortak). */
-export function breakdownLines(b: PriceBreakdown): Array<{ label: string; value: string; tone?: "discount" | "kdv" }> {
+/** İnsan-okur döküm satırları (widget/panel/fiş ortak). Ara toplam = matrah − indirim. */
+export function breakdownLines(b: PriceBreakdown): Array<{ label: string; value: string; tone?: "discount" | "kdv" | "mid" }> {
   const money = (c: number) => `${(c / 100).toLocaleString("tr-TR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ₺`;
-  const out: Array<{ label: string; value: string; tone?: "discount" | "kdv" }> = [
+  const out: Array<{ label: string; value: string; tone?: "discount" | "kdv" | "mid" }> = [
     { label: "Matrah (KDV hariç)", value: money(b.subtotalCents) },
   ];
   if (b.discountCents > 0) {
@@ -161,6 +164,7 @@ export function breakdownLines(b: PriceBreakdown): Array<{ label: string; value:
       value: `−${money(b.discountCents)}`,
       tone: "discount",
     });
+    out.push({ label: "Ara toplam (indirim sonrası)", value: money(b.subtotalCents - b.discountCents), tone: "mid" });
   }
   out.push({ label: "KDV", value: `+${money(b.kdvCents)}`, tone: "kdv" });
   return out;

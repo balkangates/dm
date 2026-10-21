@@ -55,10 +55,15 @@ export function CampaignCardView({
               {t("common.sponsored")}
             </span>
           ) : null}
-          {/* FAZ 12B — kapsam rozeti: yalnız kapsam belirtilmiş kampanyalarda görünür. */}
-          {c.serviceMode && c.serviceMode !== "ALL" ? (
+          {/* FAZ 12B/12C-3 — kapsam rozetleri: çoklu sipariş tipi + ödeme kapsamı. */}
+          {c.serviceModes && c.serviceModes.length < 3 ? (
             <span className="rounded-full bg-ink/80 px-2 py-0.5 text-[0.62rem] font-semibold text-white backdrop-blur-sm">
-              {c.serviceMode === "GEL_AL" ? "Gel-al / işletme içi" : "Paket servis"}
+              {c.serviceModes.map((m) => (m === "GEL_AL" ? "Gel-al" : m === "REZERVE" ? "Rezerve" : "Paket servis")).join(" + ")}
+            </span>
+          ) : null}
+          {c.paymentScope?.length === 1 ? (
+            <span className="rounded-full bg-accent-700 px-2 py-0.5 text-[0.62rem] font-semibold text-white backdrop-blur-sm">
+              {c.paymentScope[0] === "CASH_DOOR" ? "Nakite özel indirim" : "Karta özel indirim"}
             </span>
           ) : null}
         </div>

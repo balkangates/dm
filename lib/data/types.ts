@@ -63,8 +63,12 @@ export type CampaignCard = {
   timeEnd: string | null;
   status: string;
   moderationStatus: string;
-  /** FAZ 12B — kampanya kapsamı: GEL_AL (işletme içi) / PAKET_SERVIS (adrese teslim) / ALL. */
+  /** FAZ 12B — kampanya kapsamı (eski tekli alan; yeni kod serviceModes kullanır). */
   serviceMode: string;
+  /** FAZ 12C-3 — ÇOKLU sipariş tipi kapsamı (gel-al / rezerve / paket servis). */
+  serviceModes: string[];
+  /** FAZ 12C-3 — ödeme kapsamı (CASH_DOOR / CARD_DOOR; tek ise "nakite/karta özel"). */
+  paymentScope: string[];
   isSponsored: boolean;
   imageUrl: string | null;
   qrEnabled: boolean;

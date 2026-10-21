@@ -524,6 +524,12 @@ export default function CustomerDashboard({
                   <p className="font-display text-[1rem] font-bold">
                     {o.businessName}{o.businessDistrict ? ` · ${o.businessDistrict}` : ""}{" "}
                     {o.deliveryType === "GEL_AL" ? <Badge tone="positive">Gel-al</Badge> : o.deliveryType === "REZERVE" ? <Badge tone="accent">Rezerve</Badge> : <Badge tone="neutral">Adrese teslim</Badge>}
+                    {/* FAZ 12C-3 — rezerve saati. */}
+                    {o.deliveryType === "REZERVE" && o.reservedAt ? (
+                      <span className="tabular ml-1 rounded-[3px] bg-accent-soft px-2 py-0.5 text-[0.72rem] font-semibold text-accent-700">
+                        {new Date(o.reservedAt).toLocaleString("tr-TR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}
+                      </span>
+                    ) : null}
                   </p>
                   <Badge tone={o.status === "NEW" ? "warning" : o.status === "COMPLETED" ? "positive" : ["REJECTED", "CANCELLED"].includes(o.status) ? "neutral" : "accent"}>
                     {ORDER_LABEL[o.status] ?? o.status}
@@ -600,15 +606,27 @@ export default function CustomerDashboard({
 }
 
 function ProfileSection({ user, lang, currency, onSaved }: { user: NonNullable<SessionLite>; lang: Lang; currency: Currency; onSaved: (p: Record<string, string>) => void }) {
-  const [form, setForm] = useState<{ name: string; district: string; lang: Lang; currency: Currency; country: string }>({
+  const [form, setForm] = useState<{ name: string; phone: string; district: string; address: string; lang: Lang; currency: Currency; country: string }>({
     name: user.name,
+    phone: "",
     district: "",
+    address: "",
     lang,
     currency,
     country: "TR",
   });
   const [busy, setBusy] = useState(false);
   const toast = useToast();
+
+  // FAZ 12C-3 — kayıtlı cep + adres formu önceden doldurur (sipariş formu da bunu kullanır).
+  useEffect(() => {
+    void fetch("/api/account", { method: "GET" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j) => {
+        if (j?.ok) setForm((f) => ({ ...f, phone: String(j.phone ?? ""), district: String(j.district ?? f.district), address: String(j.address ?? "") }));
+      })
+      .catch(() => undefined);
+  }, []);
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -620,13 +638,17 @@ function ProfileSection({ user, lang, currency, onSaved }: { user: NonNullable<S
     else toast.push({ title: json.error ?? "Kaydedilemedi", tone: "danger" });
   }
 
+  const pct = 40 + (form.name.trim() ? 15 : 0) + (form.phone.trim() ? 20 : 0) + (form.address.trim() ? 20 : 0) + (form.district.trim() ? 5 : 0);
+
   return (
     <div>
-      <DashSectionHead title="Profil ve Tercihler" desc="Dil, ülke ve para birimi ayrı ayarlardır; para birimi seçimi fiyatları dönüştürmez." />
+      <DashSectionHead title="Profil ve Tercihler" desc="Cep telefonu ve adres sipariş formuna otomatik gelir; dil/ülke/para birimi ayrı ayarlardır." />
       <Card className="max-w-2xl">
         <form onSubmit={submit} className="grid gap-4 sm:grid-cols-2">
           <Field label="Ad Soyad"><Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></Field>
+          <Field label="Cep telefonu" hint="Siparişte işletme seni bu numaradan arar."><Input value={form.phone} inputMode="tel" onChange={(e) => setForm({ ...form, phone: e.target.value })} placeholder="05xx xxx xx xx" /></Field>
           <Field label="İlçe / Semt"><Input value={form.district} onChange={(e) => setForm({ ...form, district: e.target.value })} placeholder="Kadıköy" /></Field>
+          <Field label="Teslimat adresi" hint="Adrese teslim siparişlerde adres alanına otomatik yazılır." className="sm:col-span-2"><Input value={form.address} onChange={(e) => setForm({ ...form, address: e.target.value })} placeholder="Mahalle, sokak, kapı no" /></Field>
           <Field label="Dil">
             <Select value={form.lang} onChange={(e) => setForm({ ...form, lang: e.target.value as Lang })}>
               <option value="tr">Türkçe</option><option value="en">English</option><option value="ka">ქართული</option>
@@ -649,7 +671,7 @@ function ProfileSection({ user, lang, currency, onSaved }: { user: NonNullable<S
             <p><span className="text-muted">Rol:</span> <strong>{user.role === "ADMIN" ? "Yönetici" : user.role === "BUSINESS" ? "İşletme" : "Müşteri"}</strong></p>
             <p><span className="text-muted">Davet kodu:</span> <strong className="tabular">{user.referralCode}</strong></p>
           </div>
-          <div className="mt-4"><Progress value={70} tone="positive" /><p className="mt-2 text-[0.78rem] text-muted">Profil tamamlama %70 — telefon ve konum ekleyerek kişiselleştirmeyi artır.</p></div>
+          <div className="mt-4"><Progress value={pct} tone="positive" /><p className="mt-2 text-[0.78rem] text-muted">Profil tamamlama %{pct} — cep telefonu ve teslimat adresi ekleyerek siparişlerini hızlandır.</p></div>
         </Card>
       </div>
     </div>

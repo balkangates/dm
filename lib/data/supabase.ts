@@ -28,6 +28,21 @@ const pickStr = (rows: Row[], id: unknown, field: string, fallback = "—"): str
   return v == null || v === "" ? fallback : String(v);
 };
 
+/** FAZ 12C-3 — kampanya kapsamı: çoklu sipariş tipi + ödeme kapsamı
+ * (yeni alanlar yoksa eski tekli service_mode'dan/varsayılanlardan türetilir). */
+const ALL_ORDER_MODES = ["GEL_AL", "REZERVE", "PAKET_SERVIS"];
+function campaignScope(c: Row) {
+  const ms = Array.isArray(c.service_modes) && c.service_modes.length
+    ? (c.service_modes as unknown[]).map(String)
+    : !str(c.service_mode) || str(c.service_mode) === "ALL"
+      ? ALL_ORDER_MODES
+      : [str(c.service_mode)];
+  const ps = Array.isArray(c.payment_scope) && c.payment_scope.length
+    ? (c.payment_scope as unknown[]).map(String)
+    : ["CASH_DOOR", "CARD_DOOR"];
+  return { serviceMode: str(c.service_mode) || "ALL", serviceModes: ms, paymentScope: ps };
+}
+
 async function sb() {
   return await createClient();
 }
@@ -94,8 +109,8 @@ function toCard(c: Row) {
     timeEnd: nul(c.time_end),
     status: str(c.status),
     moderationStatus: str(c.moderation_status),
-    // FAZ 12B — kampanya kapsamı: gel-al (işletme içi) / paket servis (adrese teslim).
-    serviceMode: str(c.service_mode) || "ALL",
+    // FAZ 12B/12C-3 — kapsam: çoklu sipariş tipi + ödeme kapsamı.
+    ...campaignScope(c),
     isSponsored: Boolean(c.is_sponsored),
     imageUrl: nul(c.image_url),
     qrEnabled: Boolean(c.qr_enabled),
@@ -463,6 +478,8 @@ export async function getCustomerData(userId: string) {
         campaignTitle: nul(o.campaign_title),
         paymentMethod: str(o.payment_method),
         deliveryType: str(o.delivery_type) || "PAKET_SERVIS",
+        // FAZ 12C-3 — rezerve sipariş saati (masa planı).
+        reservedAt: iso(o.reserved_at),
         source: str(o.source),
         status: str(o.status),
         createdAt: iso(o.created_at) ?? "",
@@ -648,6 +665,8 @@ export async function getBusinessData(businessId: string, days = 14) {
       campaignTitle: nul(o.campaign_title),
       paymentMethod: str(o.payment_method),
       deliveryType: str(o.delivery_type) || "PAKET_SERVIS",
+      // FAZ 12C-3 — rezerve sipariş saati (masa planı).
+      reservedAt: iso(o.reserved_at),
       source: str(o.source),
       status: str(o.status),
       createdAt: iso(o.created_at) ?? "",
@@ -701,8 +720,8 @@ export async function getBusinessData(businessId: string, days = 14) {
       days: (c.days as number[]) ?? [],
       status: str(c.status),
       moderationStatus: str(c.moderation_status),
-      // FAZ 12B — kapsam: gel-al (işletme içi) / paket servis (adrese teslim) / ikisi.
-      serviceMode: str(c.service_mode) || "ALL",
+      // FAZ 12B/12C-3 — kapsam: çoklu sipariş tipi + ödeme kapsamı.
+      ...campaignScope(c),
       isSponsored: Boolean(c.is_sponsored),
       qrEnabled: Boolean(c.qr_enabled),
       eligibleItems: (c.eligible_items as string[]) ?? [],
@@ -932,6 +951,8 @@ export async function getAdminData() {
       campaignTitle: nul(o.campaign_title),
       paymentMethod: str(o.payment_method),
       deliveryType: str(o.delivery_type) || "PAKET_SERVIS",
+      // FAZ 12C-3 — rezerve sipariş saati (masa planı).
+      reservedAt: iso(o.reserved_at),
       source: str(o.source),
       status: str(o.status),
       createdAt: iso(o.created_at) ?? "",
@@ -1043,8 +1064,8 @@ export async function getAdminData() {
       title: str(c.title),
       status: str(c.status),
       moderationStatus: str(c.moderation_status),
-      // FAZ 12B — moderasyon listesinde kapsam rozeti için.
-      serviceMode: str(c.service_mode) || "ALL",
+      // FAZ 12B/12C-3 — moderasyon listesinde kapsam + ödeme rozeti için.
+      ...campaignScope(c),
       isSponsored: Boolean(c.is_sponsored),
       discountPercent: n(c.discount_percent),
       currency: str(c.currency),

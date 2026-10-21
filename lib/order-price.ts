@@ -29,7 +29,13 @@ export type PriceCampaign = {
   discountPercent?: number | null;
   discountAmountCents?: number | null;
   minBasketCents?: number | null;
+  /** Eski tekli kapsam (geriye uyum); yeni kod serviceModes kullanır. */
   serviceMode?: string | null;
+  /** FAZ 12C-3 — çoklu sipariş tipi kapsamı (gel-al / rezerve / paket servis). */
+  serviceModes?: string[] | null;
+  /** FAZ 12C-3 — ödeme kapsamı; DİZİDE TEK eleman varsa yalnız o ödemede geçerli
+   *  (ör. yalnız CASH_DOOR → "nakite özel indirim"; iki eleman/boş → her ikisinde). */
+  paymentScope?: string[] | null;
   startsAt?: string | null;
   endsAt?: string | null;
 };
@@ -54,12 +60,29 @@ export function normalizeKdv(rate: unknown, fallback: number): number {
   return (KDV_RATES as readonly number[]).includes(r) ? r : fallback;
 }
 
-/** Kampanya mod kapsamı: ALL (veya boş) her modda; daraltılmışsa yalnız kendi modunda. */
+/** Kampanya mod kapsamı: çoklu service_modes (yoksa eski tekli service_mode). */
 export function campaignCoversMode(campaign: PriceCampaign, mode: OrderMode | null): boolean {
-  const m = String(campaign.serviceMode ?? "ALL");
-  if (m === "ALL" || !m) return true;
+  const modes = campaign.serviceModes?.length
+    ? campaign.serviceModes
+    : campaign.serviceMode
+      ? campaign.serviceMode === "ALL"
+        ? ["GEL_AL", "REZERVE", "PAKET_SERVIS"]
+        : [campaign.serviceMode]
+      : null;
+  if (!modes || modes.length === 3) return true;
   if (!mode) return true; // mod henüz bilinmiyorsa kapsam ihlali sayılmaz
-  return m === mode;
+  return modes.includes(mode);
+}
+
+/** FAZ 12C-3 — ödeme kapsamı: yalnız TEK elemanlı ödeme seçiliyken indirim
+ *  uygulanır (ör. nakite özel %30). İkisi de seçili/boş → her ödemede geçerli;
+ *  ödeme henüz SEÇİLMEDİYSE tek-ödemeye özel kampanyanın indirimi gösterilmez
+ *  (yanıltıcı toplam olmasın diye muhafazakâr yaklaşım). */
+export function campaignCoversPayment(campaign: PriceCampaign, payment: string | null | undefined): boolean {
+  const only = campaign.paymentScope?.length === 1 ? campaign.paymentScope[0] : null;
+  if (!only) return true;
+  if (!payment) return false;
+  return payment === only;
 }
 
 function campaignActiveNow(c: PriceCampaign, now: Date): boolean {
@@ -77,12 +100,15 @@ export function bestCampaign(
   campaigns: PriceCampaign[],
   mode: OrderMode | null,
   now: Date = new Date(),
+  /** FAZ 12C-3 — ödeme yöntemi: tek-ödemeye özel kampanyalar yalnız onda geçerli. */
+  payment: string | null = null,
 ): PriceCampaign | null {
   const subtotal = items.reduce((s, it) => s + cents(it.qty) * cents(it.unitPriceCents), 0);
   let best: PriceCampaign | null = null;
   let bestDiscount = 0;
   for (const c of campaigns) {
     if (!campaignCoversMode(c, mode)) continue;
+    if (!campaignCoversPayment(c, payment)) continue;
     if (!campaignActiveNow(c, now)) continue;
     const minB = c.minBasketCents == null ? 0 : cents(c.minBasketCents);
     if (subtotal < minB) continue;
@@ -108,6 +134,8 @@ export function computeTotals(input: {
   businessKdvRate: number;
   campaign?: PriceCampaign | null;
   mode?: OrderMode | null;
+  /** FAZ 12C-3 — ödeme yöntemi (tek-ödemeye özel kampanya kapsamı için). */
+  payment?: string | null;
   now?: Date;
 }): PriceBreakdown {
   const items = input.items.map((it) => ({
@@ -118,7 +146,9 @@ export function computeTotals(input: {
   }));
   const subtotalCents = items.reduce((s, it) => s + it.qty * it.unitPriceCents, 0);
   const campaign =
-    input.campaign === undefined ? bestCampaign(items, [], input.mode ?? null, input.now ?? new Date()) : input.campaign;
+    input.campaign === undefined
+      ? bestCampaign(items, [], input.mode ?? null, input.now ?? new Date(), input.payment ?? null)
+      : input.campaign;
   const rawDiscount = campaign
     ? campaign.discountPercent && campaign.discountPercent > 0
       ? Math.round((subtotalCents * Number(campaign.discountPercent)) / 100)

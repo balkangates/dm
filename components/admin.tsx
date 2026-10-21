@@ -165,7 +165,7 @@ export default function AdminDashboard({ data, lang, currency, section, affiliat
     <Table><thead><tr><Th>Kampanya</Th><Th>İşletme</Th><Th>İndirim</Th><Th>Bitiş</Th><Th>Durum</Th><Th right>Karar</Th></tr></thead>
       <tbody>{data.campaigns.map((cm) => (<tr key={cm.id}><Td strong>{cm.title}<span className="ml-2 text-[0.72rem] text-muted">{cm.code}</span></Td><Td>{cm.businessName}</Td>
         <Td className="tabular">{cm.discountPercent ? `%${cm.discountPercent}` : "—"}</Td><Td>{cm.endsAt ? shortDate(cm.endsAt, lang) : "—"}</Td>
-        <Td><StatusBadge status={cm.moderationStatus} lang={lang} />{cm.serviceMode === "GEL_AL" ? <span className="ml-2"><Badge tone="positive">Gel-al</Badge></span> : cm.serviceMode === "PAKET_SERVIS" ? <span className="ml-2"><Badge tone="neutral">Paket servis</Badge></span> : null}{cm.isSponsored ? <span className="ml-2"><Badge tone="accent">Sponsorlu</Badge></span> : null}</Td>
+        <Td><StatusBadge status={cm.moderationStatus} lang={lang} />{(!cm.serviceModes || cm.serviceModes.length === 3) ? null : cm.serviceModes.map((m) => <span key={m} className="ml-2"><Badge tone="positive">{m === "GEL_AL" ? "Gel-al" : m === "REZERVE" ? "Rezerve" : "Paket servis"}</Badge></span>)}{cm.paymentScope?.length === 1 ? <span className="ml-2"><Badge tone="accent">{cm.paymentScope[0] === "CASH_DOOR" ? "Nakite özel" : "Karta özel"}</Badge></span> : null}{cm.isSponsored ? <span className="ml-2"><Badge tone="accent">Sponsorlu</Badge></span> : null}</Td>
         <Td right><span className="inline-flex gap-1.5">
           <Button size="sm" onClick={() => ask("Kampanyayı onayla", cm.title, () => act({ action: "campaign_moderate", id: cm.id, decision: "APPROVED" }, "Onaylandı"))}>Onayla</Button>
           <Button size="sm" variant="danger" onClick={() => ask("Kampanyayı reddet", `${cm.title} yayından kaldırılacak.`, () => act({ action: "campaign_moderate", id: cm.id, decision: "REJECTED" }, "Reddedildi"))}>Reddet</Button>
@@ -264,7 +264,7 @@ export default function AdminDashboard({ data, lang, currency, section, affiliat
                       ) : null}
                     </Td>
                     <Td>{o.deliveryType === "PAKET_SERVIS" ? (o.paymentMethod === "CARD_DOOR" ? "Kapıda kart" : "Kapıda nakit") : (o.paymentMethod === "CARD_DOOR" ? "İş yerinde kart" : "İş yerinde nakit")}</Td>
-                    <Td>{o.deliveryType === "GEL_AL" ? <Badge tone="positive">Gel-al</Badge> : o.deliveryType === "REZERVE" ? <Badge tone="accent">Rezerve</Badge> : <Badge tone="neutral">Paket servis</Badge>}</Td>
+                    <Td>{o.deliveryType === "GEL_AL" ? <Badge tone="positive">Gel-al</Badge> : o.deliveryType === "REZERVE" ? <Badge tone="accent">Rezerve</Badge> : <Badge tone="neutral">Paket servis</Badge>}{o.deliveryType === "REZERVE" && o.reservedAt ? <span className="tabular ml-1 text-[0.74rem] text-muted">saat {new Date(o.reservedAt).toLocaleString("tr-TR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}</span> : null}</Td>
                     <Td>{o.source === "VOICE" ? <Badge tone="accent">Sesli</Badge> : <Badge tone="neutral">Web</Badge>}</Td>
                     <Td><Badge tone={o.status === "NEW" ? "warning" : o.status === "COMPLETED" ? "positive" : ["REJECTED", "CANCELLED"].includes(o.status) ? "neutral" : "accent"}>{o.status}</Badge></Td>
                     <Td>{shortDate(new Date(o.createdAt))}</Td>

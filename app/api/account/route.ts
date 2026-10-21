@@ -12,6 +12,22 @@ import {
 
 export const dynamic = "force-dynamic";
 
+/** FAZ 12C-3 — profil alanlarını oku (cep/adres formu önceden doldurmak için).
+ *  RLS: yalnızca kendi satırı okunur. */
+export async function GET() {
+  const user = await getSessionUser();
+  if (!user) return jsonError(401, "Giriş yapmalısınız.");
+  const { createClient } = await import("@/lib/supabase/server");
+  const client = await createClient();
+  const { data } = await client.from("profiles").select("phone, district, address").eq("id", user.id).maybeSingle();
+  return Response.json({
+    ok: true,
+    phone: (data?.phone as string | null) ?? null,
+    district: (data?.district as string | null) ?? null,
+    address: (data?.address as string | null) ?? null,
+  });
+}
+
 /** Hesap işlemleri (FAZ 6 — Supabase: RLS ile yalnızca kendi satırları). */
 export async function POST(req: Request) {
   const user = await getSessionUser();

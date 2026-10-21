@@ -39,8 +39,10 @@ const EMPTY = {
   title: "", description: "", terms: "", type: "PERCENT", discountPercent: 15, discountAmountCents: 0,
   minBasketCents: 0, currency: "TRY", startsAt: "", endsAt: "", timeStart: "", timeEnd: "",
   eligibleItems: "", exclusions: "", imageUrl: "", perCustomerLimit: 2, usageLimit: 500, qrEnabled: true,
-  // FAZ 12B — kampanya kapsamı zorunlu seçim: "" = henüz seçilmedi (GEL_AL/PAKET_SERVIS/ALL).
-  serviceMode: "",
+  // FAZ 12C-3 — kapsam ÇOKLU: her sipariş tipi ve ödeme yöntemi ayrı ayrı işaretlenir
+  // (boş dizi kalmaz — doğrulama en az birini şart koşar; varsayılan: hepsi).
+  serviceModes: ["GEL_AL", "REZERVE", "PAKET_SERVIS"] as string[],
+  paymentScope: ["CASH_DOOR", "CARD_DOOR"] as string[],
 };
 
 /* İSTEK (a): işletme sahibi işletme profilini EKSİKSİZ doldurmalı.
@@ -473,7 +475,7 @@ function CampaignsSection({ d, lang, currency, post, profileMissing }: { d: BD; 
     const c = d.campaigns.find((x) => x.id === id); if (!c) return;
     setEditing(id);
     // Not: para alanları formda BİRİM tutar olarak tutulur; kaydetmede ×100'e çevrilir.
-    setF({ ...EMPTY, title: c.title, description: c.description ?? "", terms: c.terms ?? "", type: c.type, discountPercent: c.discountPercent, discountAmountCents: c.discountAmountCents / 100, minBasketCents: c.minBasketCents / 100, currency: c.currency, startsAt: (c.startsAt ?? "").slice(0, 10), endsAt: (c.endsAt ?? "").slice(0, 10), timeStart: c.timeStart ?? "", timeEnd: c.timeEnd ?? "", eligibleItems: c.eligibleItems.join(", "), exclusions: c.exclusions.join(", "), imageUrl: c.imageUrl ?? "", perCustomerLimit: c.perCustomerLimit, usageLimit: c.usageLimit ?? 500, qrEnabled: c.qrEnabled, serviceMode: c.serviceMode ?? "ALL" });
+    setF({ ...EMPTY, title: c.title, description: c.description ?? "", terms: c.terms ?? "", type: c.type, discountPercent: c.discountPercent, discountAmountCents: c.discountAmountCents / 100, minBasketCents: c.minBasketCents / 100, currency: c.currency, startsAt: (c.startsAt ?? "").slice(0, 10), endsAt: (c.endsAt ?? "").slice(0, 10), timeStart: c.timeStart ?? "", timeEnd: c.timeEnd ?? "", eligibleItems: c.eligibleItems.join(", "), exclusions: c.exclusions.join(", "), imageUrl: c.imageUrl ?? "", perCustomerLimit: c.perCustomerLimit, usageLimit: c.usageLimit ?? 500, qrEnabled: c.qrEnabled, serviceModes: c.serviceModes?.length ? c.serviceModes : ["GEL_AL", "REZERVE", "PAKET_SERVIS"], paymentScope: c.paymentScope?.length ? c.paymentScope : ["CASH_DOOR", "CARD_DOOR"] });
     setErrors({}); setPreview(false); setTplKey(""); setOpen(true);
   }
 
@@ -575,8 +577,9 @@ function CampaignsSection({ d, lang, currency, post, profileMissing }: { d: BD; 
     if (f.type === "PERCENT" && (f.discountPercent <= 0 || f.discountPercent > 70)) e.discountPercent = "%1–70 aralığında olmalı.";
     if ((f.type === "FIXED" || f.type === "PRODUCT") && f.discountAmountCents <= 0) e.discountAmountCents = "Sabit indirim 0'dan büyük olmalı.";
     if (f.endsAt && f.startsAt && new Date(f.endsAt) <= new Date(f.startsAt)) e.endsAt = "Bitiş, başlangıçtan sonra olmalı.";
-    // FAZ 12B — kapsam seçimi zorunlu (sunucuda da zorlanır).
-    if (!["GEL_AL", "PAKET_SERVIS", "ALL"].includes(f.serviceMode)) e.serviceMode = "Kapsam seç: gel-al (işletme içi), paket servis (adrese teslim) veya ikisi için de.";
+    // FAZ 12C-3 — kapsam zorunlu: en az bir sipariş tipi + en az bir ödeme yöntemi (sunucuda da zorlanır).
+    if (!Array.isArray(f.serviceModes) || !f.serviceModes.length) e.serviceModes = "Kapsam seç: gel-al, rezerve ve/veya paket servis (en az biri).";
+    if (!Array.isArray(f.paymentScope) || !f.paymentScope.length) e.paymentScope = "Ödeme kapsamı seç: nakit ve/veya kart (en az biri).";
     // İSTEK (d): görsel olmadan yayınlama YOK (sunucuda da zorlanır).
     if (publish && !f.imageUrl.trim()) e.imageUrl = "Yayınlamak için kampanya görseli gerekli. Görsel yükle veya bağlantısını gir.";
     setErrors(e); return Object.keys(e).length === 0;
@@ -646,7 +649,13 @@ function CampaignsSection({ d, lang, currency, post, profileMissing }: { d: BD; 
               </dl>
               <div className="mt-3 flex flex-wrap items-center gap-2">
                 <StatusBadge status={c.status} lang={lang} /><StatusBadge status={c.moderationStatus} lang={lang} />
-                {c.serviceMode === "GEL_AL" ? <Badge tone="positive">Gel-al / işletme içi</Badge> : c.serviceMode === "PAKET_SERVIS" ? <Badge tone="neutral">Paket servis</Badge> : <Badge tone="neutral">İkisi için de</Badge>}
+                {/* FAZ 12C-3 — kapsam rozetleri: çoklu sipariş tipi + ödeme kapsamı. */}
+                {!c.serviceModes || c.serviceModes.length === 3 ? (
+                  <Badge tone="neutral">Tüm sipariş tipleri</Badge>
+                ) : c.serviceModes.map((m) => (
+                  <Badge key={m} tone="positive">{m === "GEL_AL" ? "Gel-al" : m === "REZERVE" ? "Rezerve" : "Paket servis"}</Badge>
+                ))}
+                {c.paymentScope?.length === 1 ? <Badge tone="accent">{c.paymentScope[0] === "CASH_DOOR" ? "Nakite özel" : "Karta özel"}</Badge> : null}
                 {c.isSponsored ? <Badge tone="accent">{t("common.sponsored")}</Badge> : null}
                 <span className="tabular ml-auto text-[0.74rem] text-muted">{num(c.views, lang)} gösterim · {num(c.clicks, lang)} tıklama · {c.verifiedCount} doğrulandı</span>
               </div>
@@ -714,13 +723,31 @@ function CampaignsSection({ d, lang, currency, post, profileMissing }: { d: BD; 
             <Field label="İndirim türü"><Select value={f.type} onChange={(e) => setF({ ...f, type: e.target.value })}>
               {["PERCENT", "FIXED", "PRODUCT", "HOUR", "DAY", "FIRST", "RETURN", "QR_ONLY"].map((v) => <option key={v} value={v}>{v}</option>)}
             </Select></Field>
-            <Field label="Kapsam (hangi sipariş tipinde geçerli)" required error={errors.serviceMode} hint="Gel-al: işyerinden alan ve içeride yiyen müşteri. Paket servis: adrese teslim.">
-              <Select value={f.serviceMode} onChange={(e) => setF({ ...f, serviceMode: e.target.value })}>
-                <option value="">Seç…</option>
-                <option value="GEL_AL">Gel-al / işletme içi</option>
-                <option value="PAKET_SERVIS">Paket servis (adrese teslim)</option>
-                <option value="ALL">İkisi için de</option>
-              </Select>
+            {/* FAZ 12C-3 — kapsam artık ÇOKLU: gel-al / rezerve / paket servis ayrı ayrı işaretlenir. */}
+            <Field label="Hangi sipariş tiplerinde geçerli?" required error={errors.serviceModes} hint="Birkaçını işaretleyebilirsin; hepsi işaretliyse tüm sipariş tiplerinde geçerlidir." className="sm:col-span-2">
+              <div className="flex flex-wrap gap-x-5 gap-y-2">
+                {([["GEL_AL", "Gel-al (işletme içi)"], ["REZERVE", "Rezerve"], ["PAKET_SERVIS", "Paket servis (adrese teslim)"]] as const).map(([v, label]) => (
+                  <Checkbox
+                    key={v}
+                    checked={f.serviceModes.includes(v)}
+                    label={label}
+                    onChange={(on) => setF({ ...f, serviceModes: on ? [...f.serviceModes, v] : f.serviceModes.filter((x) => x !== v) })}
+                  />
+                ))}
+              </div>
+            </Field>
+            {/* FAZ 12C-3 — ödeme kapsamı: kart maliyeti daha yüksektir; örn. yalnız nakit kampanya. */}
+            <Field label="Hangi ödeme yönteminde geçerli?" required error={errors.paymentScope} hint="Kapıda/iş yerinde nakit veya kart. İkisi de işaretliyse her ikisinde de geçerlidir." className="sm:col-span-2">
+              <div className="flex flex-wrap gap-x-5 gap-y-2">
+                {([["CASH_DOOR", "Nakit"], ["CARD_DOOR", "Kart"]] as const).map(([v, label]) => (
+                  <Checkbox
+                    key={v}
+                    checked={f.paymentScope.includes(v)}
+                    label={label}
+                    onChange={(on) => setF({ ...f, paymentScope: on ? [...f.paymentScope, v] : f.paymentScope.filter((x) => x !== v) })}
+                  />
+                ))}
+              </div>
             </Field>
             <Field label="Para birimi"><Select value={f.currency} onChange={(e) => setF({ ...f, currency: e.target.value })}>
               {["TRY", "USD", "GEL", "EUR"].map((v) => <option key={v} value={v}>{v}</option>)}
@@ -1055,30 +1082,52 @@ const ORDER_NEXT: Record<string, Array<{ status: string; label: string; variant?
   READY: [{ status: "COMPLETED", label: "Teslim edildi" }],
 };
 
-/** FAZ 12C — sipariş düştüğünde çalınan kısa zil (Web Audio; anahtar/gömülü ses dosyası yok). */
-function playOrderBell() {
+/** FAZ 12C-3 — paylaşımlı ses bağlamı: MOBİLDE ilk dokunuşta oluşturulur ve
+ *  resume edilir. Sipariş bildirimi gelince zil sessiz kalmasın diye (iOS/
+ *  Android otomatik oynatma kilidi: gesture'siz AudioContext suspended açılır). */
+let bellAc: AudioContext | null = null;
+function warmAudio() {
   try {
     const w = window as unknown as { AudioContext?: typeof AudioContext; webkitAudioContext?: typeof AudioContext };
     const Ctor = w.AudioContext ?? w.webkitAudioContext;
     if (!Ctor) return;
-    const ac = new Ctor();
-    const t0 = ac.currentTime;
-    [0, 0.26].forEach((off, i) => {
-      const osc = ac.createOscillator();
-      const gain = ac.createGain();
-      osc.type = "sine";
-      osc.frequency.value = i === 0 ? 880 : 1174.66;
-      gain.gain.setValueAtTime(0.0001, t0 + off);
-      gain.gain.exponentialRampToValueAtTime(0.3, t0 + off + 0.02);
-      gain.gain.exponentialRampToValueAtTime(0.0001, t0 + off + 0.24);
-      osc.connect(gain);
-      gain.connect(ac.destination);
-      osc.start(t0 + off);
-      osc.stop(t0 + off + 0.3);
-    });
-    setTimeout(() => void ac.close(), 1200);
+    if (!bellAc) bellAc = new Ctor();
+    if (bellAc.state === "suspended") void bellAc.resume().catch(() => undefined);
   } catch {
-    /* ses çalınamadı — yoksay (otomatik oynatma kuralı) */
+    /* yoksay */
+  }
+}
+if (typeof window !== "undefined") {
+  window.addEventListener("pointerdown", warmAudio, { once: true, passive: true });
+  window.addEventListener("keydown", warmAudio, { once: true, passive: true });
+}
+
+/** FAZ 12C — sipariş düştüğünde çalınan kısa zil (Web Audio; anahtar/gömülü ses dosyası yok). */
+function playOrderBell() {
+  try {
+    warmAudio();
+    const ac = bellAc;
+    if (!ac) return;
+    const start = () => {
+      const t0 = ac.currentTime;
+      [0, 0.26].forEach((off, i) => {
+        const osc = ac.createOscillator();
+        const gain = ac.createGain();
+        osc.type = "sine";
+        osc.frequency.value = i === 0 ? 880 : 1174.66;
+        gain.gain.setValueAtTime(0.0001, t0 + off);
+        gain.gain.exponentialRampToValueAtTime(0.3, t0 + off + 0.02);
+        gain.gain.exponentialRampToValueAtTime(0.0001, t0 + off + 0.24);
+        osc.connect(gain);
+        gain.connect(ac.destination);
+        osc.start(t0 + off);
+        osc.stop(t0 + off + 0.3);
+      });
+    };
+    if (ac.state === "suspended") void ac.resume().then(start).catch(() => undefined);
+    else start();
+  } catch {
+    /* ses çalınamadı — yoksay (otomatik oynatma kuralı); bildirim yine görünür */
   }
 }
 
@@ -1114,6 +1163,7 @@ function printOrderReceipt(x: Record<string, unknown>) {
 <h1>${esc(x.business_name ?? "SIPARIS")}</h1>
 <p>#${esc(String(x.id ?? "").slice(0, 8))} · ${new Date(String(x.created_at ?? Date.now())).toLocaleString("tr-TR")}</p>
 <p>TIP: ${dt === "GEL_AL" ? "GEL-AL (isletme ici)" : dt === "REZERVE" ? "REZERVE (ileri tarihli gel-al)" : "PAKET SERVIS (adrese teslim)"}</p>
+${dt === "REZERVE" && x.reserved_at ? `<p><strong>REZERVE SAAT: ${new Date(String(x.reserved_at)).toLocaleString("tr-TR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}</strong></p>` : ""}
 <p>ODEME: ${String(x.payment_method) === "CARD_DOOR" ? (dt === "PAKET_SERVIS" ? "Kapida kart" : "Is yerinde kart") : dt === "PAKET_SERVIS" ? "Kapida nakit" : "Is yerinde nakit"}</p>
 <hr>
 <p><strong>${esc(x.customer_name)}</strong> · ${esc(x.customer_phone)}</p>
@@ -1249,6 +1299,12 @@ function OrdersSection({ d, post, lang }: { d: BD; post: (r: string, b: Record<s
                     {o.customerName}{" "}
                     {o.source === "VOICE" ? <Badge tone="accent">Sesli asistan</Badge> : <Badge tone="neutral">Web</Badge>}{" "}
                     {o.deliveryType === "GEL_AL" ? <Badge tone="positive">Gel-al</Badge> : o.deliveryType === "REZERVE" ? <Badge tone="accent">Rezerve</Badge> : <Badge tone="neutral">Paket servis</Badge>}
+                    {/* FAZ 12C-3 — rezerve saati (masa planı). */}
+                    {o.deliveryType === "REZERVE" && o.reservedAt ? (
+                      <span className="tabular ml-1 rounded-[3px] bg-accent-soft px-2 py-0.5 text-[0.72rem] font-semibold text-accent-700">
+                        Saat: {new Date(o.reservedAt).toLocaleString("tr-TR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}
+                      </span>
+                    ) : null}
                   </p>
                   <p className="mt-1 text-[0.82rem] text-muted">
                     <a href={`tel:${o.customerPhone}`} className="link-sweep">{o.customerPhone}</a>

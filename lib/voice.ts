@@ -51,7 +51,12 @@ export type VoiceCampaign = {
   minBasketCents?: number | null;
   endsAt?: string | null;
   startsAt?: string | null;
+  /** Eski tekli kapsam (geriye uyum). */
   serviceMode?: string | null;
+  /** FAZ 12C-3 — çoklu sipariş tipi kapsamı. */
+  serviceModes?: string[] | null;
+  /** FAZ 12C-3 — ödeme kapsamı (tek eleman = yalnız o ödeme yönteminde geçerli). */
+  paymentScope?: string[] | null;
 };
 
 /** İşletmenin açık sipariş modları (FAZ 12C ayarları; undefined = hepsi açık). */
@@ -75,7 +80,8 @@ export type VoiceCartLine = {
   options?: VoiceOptionPick[];
 };
 export type VoicePayment = "CASH_DOOR" | "CARD_DOOR";
-export type VoiceStage = "menu" | "delivery" | "qty" | "ordering" | "details" | "payment" | "confirm" | "done";
+/** "reserved" = FAZ 12C-3: rezerve siparişte SAAT sorusu (zorunlu — masa planı). */
+export type VoiceStage = "menu" | "delivery" | "qty" | "ordering" | "details" | "reserved" | "payment" | "confirm" | "done";
 
 export type VoiceState = {
   stage: VoiceStage;
@@ -84,6 +90,8 @@ export type VoiceState = {
   name: string;
   phone: string;
   address: string;
+  /** FAZ 12C-3 — rezervasyon saati "HH:MM" (REZERVE'de zorunlu; masa planı için). */
+  reservedAt: string | null;
   payment: VoicePayment | null;
   /** Adet sorusu beklenen satır (FAZ 12C). */
   pendingQtyFor?: string | null;
@@ -108,6 +116,7 @@ export const initialVoiceState = (): VoiceState => ({
   name: "",
   phone: "",
   address: "",
+  reservedAt: null,
   payment: null,
   pendingQtyFor: null,
 });
@@ -324,10 +333,14 @@ export function cartBreakdown(s: VoiceState, ctx: VoiceCtx): PriceBreakdown {
     discountAmountCents: c.discountAmountCents,
     minBasketCents: c.minBasketCents,
     serviceMode: c.serviceMode,
+    serviceModes: c.serviceModes,
+    paymentScope: c.paymentScope,
     startsAt: c.startsAt,
     endsAt: c.endsAt,
   }));
-  const best = bestCampaign(items, camps, s.mode);
+  // FAZ 12C-3 — ödeme bilgisi de verilir: nakite/karta özel kampanyalar yalnız
+  // o ödeme yöntemi seçiliyken indirime girer (muhafazakâr: seçilmemişse gösterme).
+  const best = bestCampaign(items, camps, s.mode, new Date(), s.payment);
   return computeTotals({
     items,
     businessKdvRate: ctx.businessKdvRate ?? 20,
@@ -366,7 +379,7 @@ const stageUi = (s: VoiceStage): VoiceUi =>
   : s === "delivery" ? "delivery"
   : s === "qty" ? "qty"
   : s === "ordering" ? "cart"
-  : s === "details" ? "details"
+  : s === "details" || s === "reserved" ? "details" /* reserved = saat sorusu; details panelinde alan da var */
   : s === "payment" ? "payment"
   : s === "confirm" ? "confirm"
   : "done";
@@ -391,11 +404,46 @@ const modeWord = (m: VoiceMode | null) =>
   : m === "PAKET_SERVIS" ? "adrese teslim (paket servis)"
   : "sipariş";
 
-const modeTag = (m: string | null | undefined) =>
-  m === "GEL_AL" ? " · gel-al" : m === "REZERVE" ? " · rezerve" : m === "PAKET_SERVIS" ? " · paket servis" : "";
+/* ------------------- FAZ 12C-3 — çoklu kapsam + ödeme kapsamı ------------------- */
+
+/** Kampanyanın geçerli olduğu sipariş tipleri (yeni çoklu alan; yoksa eski tekli). */
+const campModes = (c: VoiceCampaign): string[] | null =>
+  c.serviceModes?.length
+    ? c.serviceModes
+    : c.serviceMode
+      ? c.serviceMode === "ALL"
+        ? ["GEL_AL", "REZERVE", "PAKET_SERVIS"]
+        : [c.serviceMode]
+      : null;
+
+/** Kısa kapsam etiketi (kampanya listesi satırları için). */
+const campModeTag = (c: VoiceCampaign): string => {
+  const ms = campModes(c);
+  if (!ms || ms.length === 3) return "";
+  return ms.map((m) => (m === "GEL_AL" ? " · gel-al" : m === "REZERVE" ? " · rezerve" : " · paket servis")).join("");
+};
+
+/** FAZ 12C-3 — ödeme kapsamı etiketi: yalnız tek ödeme ise "nakite/karta özel". */
+const campPayTag = (c: VoiceCampaign): string =>
+  c.paymentScope?.length === 1 ? (c.paymentScope[0] === "CASH_DOOR" ? " · nakite özel" : " · karta özel") : "";
+
+/** Uzun kapsam cümlesi (sesli anlatım için). */
+function campScopeText(c: VoiceCampaign): string {
+  const ms = campModes(c);
+  const modes = !ms || ms.length === 3
+    ? "tüm sipariş tiplerinde"
+    : ms.map((m) => (m === "GEL_AL" ? "gel-al" : m === "REZERVE" ? "rezerve" : "adrese teslim")).join(" ve ") + " siparişlerinde";
+  const pay = c.paymentScope?.length === 1
+    ? c.paymentScope[0] === "CASH_DOOR" ? "yalnız nakit ödemelerde" : "yalnız kart ödemelerde"
+    : null;
+  return [modes, pay].filter(Boolean).join(", ");
+}
 
 function campaignsView(ctx: VoiceCtx, mode: VoiceMode | null): VoiceStep {
-  const all = ctx.campaigns.filter((c) => !mode || !c.serviceMode || c.serviceMode === "ALL" || c.serviceMode === mode);
+  const all = ctx.campaigns.filter((c) => {
+    const ms = campModes(c);
+    return !mode || !ms || ms.includes(mode);
+  });
   const list = all.slice(0, 5);
   if (!list.length) {
     return {
@@ -417,7 +465,7 @@ function campaignsView(ctx: VoiceCtx, mode: VoiceMode | null): VoiceStep {
           ? `${tl(c.discountAmountCents)} indirim`
           : c.endsAt
             ? `geçerlilik: ${c.endsAt.slice(0, 10)}`
-            : "detay sayfada") + modeTag(c.serviceMode),
+            : "detay sayfada") + campModeTag(c) + campPayTag(c),
   }));
   const scope = mode ? `${MODE_LABELS[mode]} için ` : "";
   const say =
@@ -450,31 +498,65 @@ function productsView(ctx: VoiceCtx, mode: VoiceMode | null, stage: VoiceStage =
   return { state: { ...initialVoiceState(), stage }, say, ui: "products", products: views };
 }
 
-/** FAZ 12C-2 — tıklanılan TEK kampanyanın sesli anlatımı (işitme/görme güçlüğü olanlar için). */
+/** FAZ 12C-2 — tıklanılan TEK kampanyanın sesli anlatımı (işitme/görme güçlüğü olanlar için).
+ *  FAZ 12C-3: kapsam artık ÇOKLU sipariş tipi + ödeme yöntemi de anlatılır. */
 export function announceCampaign(c: VoiceCampaign, ctx: VoiceCtx): string {
-  const scope =
-    !c.serviceMode || c.serviceMode === "ALL" ? "tüm sipariş tiplerinde"
-    : c.serviceMode === "GEL_AL" ? "yalnız gel-al siparişlerinde"
-    : c.serviceMode === "REZERVE" ? "yalnız rezerve siparişlerinde"
-    : c.serviceMode === "PAKET_SERVIS" ? "yalnız adrese teslim siparişlerinde"
-    : "";
   const disc = c.discountPercent ? `%${c.discountPercent} indirim` : c.discountAmountCents ? `${tl(c.discountAmountCents)} indirim` : "detaylar aşağıda";
   const min = c.minBasketCents ? ` Minimum sepet ${tl(c.minBasketCents)}.` : "";
   const dates = c.endsAt ? ` Geçerlilik: ${String(c.endsAt).slice(0, 10)} tarihine kadar.` : "";
-  return `${c.title}: ${disc}${scope ? `, ${scope}` : ""}.${min}${dates} Kampanya ${ctx.businessName} işletmesinde geçerlidir.`;
+  return `${c.title}: ${disc}, ${campScopeText(c)}.${min}${dates} Kampanya ${ctx.businessName} işletmesinde geçerlidir.`;
+}
+
+/** FAZ 12C-3 — rezervasyon saati çözümleyici: "19:30", "19.30", "saat 19" (00),
+ *  "7 buçuk" (07:30) kabul edilir; çözülemezse null (yeniden sorulur). */
+export function parseReservedAt(text: string): string | null {
+  // DİKKAT: norm iki nokta ve noktayı boşluğa çevirir ("19:30" → "19 30") —
+  // bu yüzden ayıraç hem ":" hem boşluk kabul edilir.
+  const t = norm(text);
+  const hm = t.match(/\b(\d{1,2})[:.\s](\d{2})\b/);
+  if (hm) {
+    const h = Number(hm[1]);
+    const m = Number(hm[2]);
+    if (h <= 23 && m <= 59) return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
+  }
+  const hb = t.match(/\b(\d{1,2})\s*buçuk\b/);
+  if (hb) {
+    const h = Number(hb[1]);
+    if (h <= 23) return `${String(h).padStart(2, "0")}:30`;
+  }
+  const hOnly = t.match(/\bsaat\s+(\d{1,2})\b/);
+  if (hOnly) {
+    const h = Number(hOnly[1]);
+    if (h <= 23) return `${String(h).padStart(2, "0")}:00`;
+  }
+  return null;
+}
+
+/** FAZ 12C-3 — ödeme henüz seçili değilse ve sepette yalnız tek ödeme yöntemine
+ *  özel kampanya varsa: "nakit seçersen indirim uygulanır" ipucu (sepet panelinde). */
+export function paymentScopeHint(s: VoiceState, ctx: VoiceCtx): string | null {
+  if (s.payment || !s.cart.length) return null;
+  const cash = cartBreakdown({ ...s, payment: "CASH_DOOR" }, ctx);
+  const card = cartBreakdown({ ...s, payment: "CARD_DOOR" }, ctx);
+  if (cash.discountCents > card.discountCents) return "Bu sepette NAKİT ödemeye özel indirim var — nakit seçersen uygulanır.";
+  if (card.discountCents > cash.discountCents) return "Bu sepette KART ödemeye özel indirim var — kart seçersen uygulanır.";
+  return null;
 }
 
 function askNextDetail(s: VoiceState): { say: string; ui: VoiceUi; state: VoiceState } {
   const needAddress = s.mode === "PAKET_SERVIS";
-  const next = !s.name ? "name" : !s.phone ? "phone" : needAddress && !s.address ? "address" : null;
+  const needReserved = s.mode === "REZERVE" && !s.reservedAt;
+  const next = !s.name ? "name" : !s.phone ? "phone" : needAddress && !s.address ? "address" : needReserved ? "reserved" : null;
   if (!next) return { say: "", ui: "payment", state: { ...s, stage: "payment" } };
   const ask =
     next === "name"
       ? "Sipariş için adını alabilir miyim?"
       : next === "phone"
         ? "Telefon numaranı söyler misin? İşletme seni onay için arayabilir."
-        : "Teslimat adresini söyler misin? Mahalle, sokak ve kapı numarası yeterli.";
-  return { say: ask, ui: "details", state: { ...s, stage: "details" } };
+        : next === "reserved"
+          ? "Rezerve siparişin için saat kaçta geleceksin? Örneğin 19:30."
+          : "Teslimat adresini söyler misin? Mahalle, sokak ve kapı numarası yeterli.";
+  return { say: ask, ui: "details", state: { ...s, stage: next === "reserved" ? "reserved" : "details" } };
 }
 
 /** Siparişe uygun mu? (FAZ 12C: açık mod + sipariş alım durumu) */
@@ -707,6 +789,14 @@ export function handleVoice(input: string, state: VoiceState, ctx: VoiceCtx): Vo
     else if (needAddress && !next.address) next.address = capitalize(input.trim());
 
     if (next.name && next.phone && (!needAddress || next.address)) {
+      // FAZ 12C-3 — REZERVE: saat zorunlu (masa planı); eksikse şimdi sor.
+      if (next.mode === "REZERVE" && !next.reservedAt) {
+        return {
+          state: { ...next, stage: "reserved" },
+          say: `${next.name}, kaydettim. Rezerve siparişin için saat kaçta geleceksin? Örneğin 19:30.`,
+          ui: "details",
+        };
+      }
       return {
         state: { ...next, stage: "payment" },
         say: `${next.name}, kaydettim. ${payAsk(next.mode)}`,
@@ -715,6 +805,23 @@ export function handleVoice(input: string, state: VoiceState, ctx: VoiceCtx): Vo
     }
     const ask = askNextDetail(next);
     return { state: ask.state, say: `Kaydettim. ${ask.say}`, ui: "details" };
+  }
+
+  /* ------------------------- RESERVED (FAZ 12C-3) ------------------------- */
+  if (state.stage === "reserved") {
+    const intent = detectIntent(t);
+    if (intent === "CANCEL") return { state: initialVoiceState(), say: "Tamam, siparişi iptal ettim.", ui: "menu" };
+    const hm = parseReservedAt(t);
+    if (!hm) {
+      return {
+        state,
+        say: "Saati '19:30' gibi söyleyebilir misin? Rezerve siparişlerde saat zorunlu — işletme masa planını ona göre yapar.",
+        ui: "details",
+      };
+    }
+    const next: VoiceState = { ...state, reservedAt: hm };
+    if (next.payment) return toConfirm(next, ctx);
+    return { state: { ...next, stage: "payment" }, say: `${hm} için kaydettim. ${payAsk(next.mode)}`, ui: "payment" };
   }
 
   /* ------------------------------ PAYMENT ------------------------------ */
@@ -766,16 +873,18 @@ export function applyMode(s: VoiceState, mode: VoiceMode, ctx: VoiceCtx): VoiceS
   return { ...s, mode, cart, stage: s.stage === "delivery" ? "ordering" : s.stage };
 }
 
-/** Form alanlarından devam: ad/telefon (+adrese teslimde adres) tamamlanınca ödeme adımına geçer. */
-export function applyDetails(s: VoiceState, d: { name?: string; phone?: string; address?: string }): VoiceState {
+/** Form alanlarından devam: ad/telefon (+adrese teslimde adres, rezerve'de saat)
+ *  tamamlanınca ödeme adımına geçer (FAZ 12C-3: REZERVE'de reservedAt zorunlu). */
+export function applyDetails(s: VoiceState, d: { name?: string; phone?: string; address?: string; reservedAt?: string }): VoiceState {
   const next: VoiceState = {
     ...s,
     name: d.name?.trim() ? d.name.trim().slice(0, 80) : s.name,
     phone: d.phone?.trim() ? d.phone.trim().slice(0, 20) : s.phone,
     address: d.address?.trim() ? d.address.trim().slice(0, 300) : s.address,
+    reservedAt: d.reservedAt?.trim() ? d.reservedAt.trim().slice(0, 5) : s.reservedAt,
   };
   const ok = next.name && next.phone && (next.mode !== "PAKET_SERVIS" || next.address);
-  next.stage = ok ? "payment" : "details";
+  next.stage = !ok ? "details" : next.mode === "REZERVE" && !next.reservedAt ? "reserved" : "payment";
   return next;
 }
 
@@ -826,7 +935,7 @@ function mergeLines(cart: VoiceCartLine[], add: VoiceCartLine[]): VoiceCartLine[
 function toConfirm(s: VoiceState, ctx: VoiceCtx): VoiceStep {
   return {
     state: { ...s, stage: "confirm" },
-    say: `Siparişin (${modeWord(s.mode)}): ${cartSummary(s)}. ${totalSay(s, ctx)}, ödeme ${paymentLabel(s.payment, s.mode)}. Onaylıyor musun?`,
+    say: `Siparişin (${modeWord(s.mode)}${s.mode === "REZERVE" && s.reservedAt ? `, saat ${s.reservedAt}` : ""}): ${cartSummary(s)}. ${totalSay(s, ctx)}, ödeme ${paymentLabel(s.payment, s.mode)}. Onaylıyor musun?`,
     ui: "confirm",
   };
 }

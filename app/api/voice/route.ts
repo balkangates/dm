@@ -37,6 +37,8 @@ export async function POST(req: Request) {
     const customerDistrict = body.customerDistrict ? String(body.customerDistrict).slice(0, 80) : null;
     const address = body.address ? String(body.address).trim().slice(0, 300) : null;
     const note = body.note ? String(body.note).trim().slice(0, 300) : null;
+    // FAZ 12C-3 — rezervasyon saati (masa planı için; REZERVE'de zorunlu).
+    const reservedAtRaw = body.reservedAt ? String(body.reservedAt) : "";
 
     if (!businessId) return NextResponse.json({ ok: false, error: "İşletme bulunamadı." }, { status: 400 });
     if (!DELIVERY_TYPES.includes(deliveryType))
@@ -45,6 +47,20 @@ export async function POST(req: Request) {
       return NextResponse.json({ ok: false, error: "Ad ve geçerli bir telefon numarası gerekli." }, { status: 400 });
     if (!["CASH_DOOR", "CARD_DOOR"].includes(paymentMethod))
       return NextResponse.json({ ok: false, error: "Geçersiz ödeme yöntemi (kapıda/iş yerinde nakit veya kart)." }, { status: 400 });
+
+    let reservedAt: Date | null = null;
+    if (deliveryType === "REZERVE") {
+      if (!reservedAtRaw)
+        return NextResponse.json(
+          { ok: false, error: "Rezerve sipariş için saat gerekli — işletme masa planını saate göre yapar. Örnek: 19:30." },
+          { status: 400 },
+        );
+      const rt = new Date(reservedAtRaw);
+      // Geçmişte veya çok ileride olamaz: 30 dk esneklik − 30 gün üst sınır.
+      if (Number.isNaN(rt.getTime()) || rt.getTime() < Date.now() - 30 * 60_000 || rt.getTime() > Date.now() + 30 * 86_400_000)
+        return NextResponse.json({ ok: false, error: "Rezerve saat geçersiz — en fazla 30 gün sonrası ve geçmiş olmayan bir saat seç." }, { status: 400 });
+      reservedAt = rt;
+    }
 
     const clean: Array<{ name: string; qty: number; unitPriceCents: number; options?: Array<{ name: string; wanted: boolean }> }> = [];
     for (const raw of items.slice(0, 25)) {
@@ -126,7 +142,8 @@ export async function POST(req: Request) {
     const businessKdvRate = Number(biz.kdv_rate ?? 20);
     const { data: campRows } = await client
       .from("campaigns")
-      .select("title, discount_percent, discount_amount_cents, min_basket_cents, service_mode, starts_at, ends_at")
+      // FAZ 12C-3 — çoklu sipariş tipi kapsamı + ödeme kapsamı da seçilir.
+      .select("title, discount_percent, discount_amount_cents, min_basket_cents, service_mode, service_modes, payment_scope, starts_at, ends_at")
       .eq("business_id", businessId)
       .eq("status", "PUBLISHED");
     const camps: PriceCampaign[] = (campRows ?? []).map((c) => ({
@@ -135,11 +152,14 @@ export async function POST(req: Request) {
       discountAmountCents: c.discount_amount_cents == null ? null : Number(c.discount_amount_cents),
       minBasketCents: c.min_basket_cents == null ? null : Number(c.min_basket_cents),
       serviceMode: c.service_mode == null ? null : String(c.service_mode),
+      serviceModes: Array.isArray(c.service_modes) && c.service_modes.length ? (c.service_modes as unknown[]).map(String) : null,
+      paymentScope: Array.isArray(c.payment_scope) && c.payment_scope.length ? (c.payment_scope as unknown[]).map(String) : null,
       startsAt: c.starts_at ? String(c.starts_at) : null,
       endsAt: c.ends_at ? String(c.ends_at) : null,
     }));
-    const campaign = bestCampaign(priceItems, camps, deliveryType);
-    const totals = computeTotals({ items: priceItems, businessKdvRate, campaign, mode: deliveryType });
+    // FAZ 12C-3 — ödeme bilgisi de verilir: nakite özel kampanya yalnız nakitte indirir.
+    const campaign = bestCampaign(priceItems, camps, deliveryType, new Date(), paymentMethod);
+    const totals = computeTotals({ items: priceItems, businessKdvRate, campaign, mode: deliveryType, payment: paymentMethod });
     const totalCents = totals.totalCents;
 
     // Yinelenen gönderim engeli (çift dokunuş / iki kez seslendirme).
@@ -186,6 +206,8 @@ export async function POST(req: Request) {
         campaign_title: totals.campaignTitle,
         payment_method: paymentMethod,
         delivery_type: deliveryType,
+        // FAZ 12C-3 — rezerve saati (masa planı); yalnız REZERVE'de dolu.
+        reserved_at: reservedAt ? reservedAt.toISOString() : null,
         source: "VOICE",
         status: "NEW",
       })

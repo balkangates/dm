@@ -23,22 +23,35 @@ function Inner({ mode, next, lang, initialRef, supabase, notice }: { mode: "logi
   const [info, setInfo] = useState(notice ?? "");
 
   async function submitSupabase() {
-    const r =
-      mode === "login"
-        ? await signInAction({ email: f.email, password: f.password, next })
-        : await signUpAction({ name: f.name, email: f.email, password: f.password, referralCode: f.referralCode, lang, next });
-    setBusy(false);
-    if (!r.ok) {
-      setError(r.error);
-      return;
+    // FAZ 12C-3 canlı testi: DEPLOY SONRASI UZUN AÇIK KALAN SEKMEDE server-action
+    // kimlikleri eskir → action undefined DÖNER ve "r.ok" hatasıyla sessiz çöker
+    // (mobilde kullanıcı "giriş yapamıyorum → sipariş eklenmiyor" görürdü).
+    // Artık hem undefined yanıt hem de istisna yakalanıp kullanıcıya net söylenir.
+    try {
+      const r =
+        mode === "login"
+          ? await signInAction({ email: f.email, password: f.password, next })
+          : await signUpAction({ name: f.name, email: f.email, password: f.password, referralCode: f.referralCode, lang, next });
+      setBusy(false);
+      if (!r || typeof r.ok !== "boolean") {
+        setError("Sayfa güncelleme sonrası eski görünümde kalmış olabilir. Sayfayı yenileyip (F5) tekrar deneyin.");
+        return;
+      }
+      if (!r.ok) {
+        setError(r.error);
+        return;
+      }
+      if (r.needsConfirmation) {
+        setInfo(r.message ?? "E-posta kutunu kontrol et.");
+        return;
+      }
+      toast.push({ title: mode === "login" ? "Giriş yapıldı" : "Hesap oluşturuldu", tone: "positive" });
+      router.push(r.redirectTo);
+      router.refresh();
+    } catch {
+      setBusy(false);
+      setError("Bağlantı kesildi veya sayfa eskidi. Sayfayı yenileyip tekrar deneyin.");
     }
-    if (r.needsConfirmation) {
-      setInfo(r.message ?? "E-posta kutunu kontrol et.");
-      return;
-    }
-    toast.push({ title: mode === "login" ? "Giriş yapıldı" : "Hesap oluşturuldu", tone: "positive" });
-    router.push(r.redirectTo);
-    router.refresh();
   }
 
   async function submit(e: React.FormEvent) {

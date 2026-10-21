@@ -215,8 +215,8 @@ export default async function BusinessPage({ params }: P) {
           kdvRate: b.kdvRate,
         }}
         products={d.products.filter((p) => p.active).map((p) => ({ name: p.name, priceCents: p.priceCents, discountPriceCents: p.discountPriceCents, deliveryPriceCents: p.deliveryPriceCents, options: p.options, kdvRate: p.kdvRate }))}
-        campaigns={d.campaigns.map((c) => ({ title: c.title, discountPercent: c.discountPercent, discountAmountCents: c.discountAmountCents, minBasketCents: c.minBasketCents, startsAt: c.startsAt, endsAt: c.endsAt, serviceMode: c.serviceMode }))}
-        user={user ? { name: user.name } : null}
+        campaigns={d.campaigns.map((c) => ({ title: c.title, discountPercent: c.discountPercent, discountAmountCents: c.discountAmountCents, minBasketCents: c.minBasketCents, startsAt: c.startsAt, endsAt: c.endsAt, serviceMode: c.serviceMode, serviceModes: c.serviceModes, paymentScope: c.paymentScope }))}
+        user={user ? { name: user.name, phone: user.phone, address: user.address } : null}
       />
     </PublicShell>
   );

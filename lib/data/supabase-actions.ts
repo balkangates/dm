@@ -243,8 +243,10 @@ export async function accountPreferences(user: SessionUserLite, body: Row) {
   const client = await sb();
   const patch: Row = {};
   if (typeof body.name === "string" && body.name.trim().length >= 3) patch.name = body.name.trim().slice(0, 120);
-  if (typeof body.phone === "string") patch.phone = body.phone.slice(0, 40);
-  if (typeof body.district === "string") patch.district = body.district.slice(0, 80);
+  if (typeof body.phone === "string") patch.phone = body.phone.trim().slice(0, 40);
+  if (typeof body.district === "string") patch.district = body.district.trim().slice(0, 80);
+  // FAZ 12C-3 — teslimat adresi: sipariş formuna otomatik gelsin diye.
+  if (typeof body.address === "string") patch.address = body.address.trim().slice(0, 300);
   if (["tr", "en", "ka"].includes(String(body.lang))) patch.lang = String(body.lang);
   if (["TRY", "USD", "GEL", "EUR"].includes(String(body.currency))) patch.currency = String(body.currency);
   if (typeof body.country === "string" && body.country.length === 2) patch.country = String(body.country).toUpperCase();
@@ -375,13 +377,26 @@ export async function campaignUpsert(actor: BusinessActorLite, body: Row) {
 
   const minBasketCents = clamp(body.minBasketCents, 0, 10_000_000);
   const currency = ["TRY", "USD", "GEL", "EUR"].includes(String(body.currency)) ? String(body.currency) : "TRY";
-  // FAZ 12B — kampanya kapsamı ZORUNLU: gel-al (işletme içi) / paket servis (adrese teslim) / ikisi.
-  const serviceMode = ["GEL_AL", "PAKET_SERVIS", "ALL"].includes(String(body.serviceMode ?? ""))
-    ? String(body.serviceMode)
-    : "";
-  if (!serviceMode)
-    errors.serviceMode = "Sipariş tipi seçilmeli: gel-al (işletme içi), paket servis (adrese teslim) veya ikisi için de.";
+  // FAZ 12C-3 — kapsam ÇOKLU: gel-al / rezerve / paket servis ayrı ayrı
+  // işaretlenebilir (biri, ikisi, üçü ya da hepsi) + ÖDEME kapsamı (nakit/kart).
+  // Kart maliyeti daha yüksek olduğu için örn. "yalnız nakit" kampanya tanımlanır.
+  const ORDER_MODES = ["GEL_AL", "REZERVE", "PAKET_SERVIS"];
+  const rawModes = Array.isArray(body.serviceModes) && body.serviceModes.length
+    ? body.serviceModes.map(String) // FAZ 12C-3 — yeni çoklu seçim
+    : [String(body.serviceMode ?? "")]; // eski tekli alanla geriye uyum
+  const serviceModes = [...new Set(rawModes.flatMap((v) => (v === "ALL" ? ORDER_MODES : ORDER_MODES.includes(v) ? [v] : [])))];
+  if (!serviceModes.length)
+    errors.serviceModes = "Kapsam seç: gel-al, rezerve ve/veya paket servis (en az biri işaretli olmalı).";
+  const paymentScope = [...new Set(
+    (Array.isArray(body.paymentScope) && body.paymentScope.length ? body.paymentScope.map(String) : ["CASH_DOOR", "CARD_DOOR"])
+      .filter((v: string) => v === "CASH_DOOR" || v === "CARD_DOOR"),
+  )];
+  if (!paymentScope.length)
+    errors.paymentScope = "Ödeme kapsamı seç: kapıda/iş yerinde nakit ve/veya kart (en az biri).";
   if (Object.keys(errors).length) return Response.json({ ok: false, errors }, { status: 422 });
+  // Eski tekli kolon geriye uyumluluk için: üçü → ALL, tek → o, karma → ALL
+  // (yeni tüm okuyucular service_modes / payment_scope alanlarını kullanır).
+  const legacyServiceMode = serviceModes.length === 3 || serviceModes.length === 2 ? "ALL" : serviceModes[0];
 
   const values: Row = {
     title,
@@ -393,7 +408,9 @@ export async function campaignUpsert(actor: BusinessActorLite, body: Row) {
     min_basket_cents: minBasketCents,
     max_discount_cents: clamp(body.maxDiscountCents, 0, 5_000_000),
     currency,
-    service_mode: serviceMode,
+    service_mode: legacyServiceMode,
+    service_modes: serviceModes,
+    payment_scope: paymentScope,
     starts_at: startsAt.toISOString(),
     ends_at: endsAt ? endsAt.toISOString() : null,
     time_start: body.timeStart ? String(body.timeStart) : null,

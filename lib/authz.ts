@@ -25,6 +25,9 @@ export type SessionUserLite = {
   lang: string;
   currency: string;
   country: string;
+  /** FAZ 12C-3 — sipariş formunun otomatik dolması için cep + adres. */
+  phone: string | null;
+  address: string | null;
 };
 
 const asRole = (v: unknown): RoleUppercase => {
@@ -78,6 +81,8 @@ export async function getSessionUser(): Promise<SessionUserLite | null> {
     lang: String(p.lang ?? "tr"),
     currency: String(p.currency ?? "TRY"),
     country: String(p.country ?? "TR"),
+    phone: (p.phone as string | null) ?? null,
+    address: (p.address as string | null) ?? null,
   };
 }
 

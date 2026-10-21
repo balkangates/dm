@@ -23,7 +23,7 @@ import { usePathname } from "next/navigation";
 import { Button, Input, useToast } from "@/components/ds";
 import {
   applyConfirm, applyDetails, applyMode, applyPayment, announceCampaign, cartBreakdown, enabledModes, handleVoice,
-  initialVoiceState, MODE_LABELS, modePrice,
+  initialVoiceState, MODE_LABELS, modePrice, paymentScopeHint,
   type VoiceCampaign, type VoiceCtx, type VoiceMode, type VoicePayment, type VoiceProduct, type VoiceState, type VoiceUi,
 } from "@/lib/voice";
 import { breakdownLines } from "@/lib/order-price";
@@ -36,6 +36,17 @@ const SHORT_MODE: Record<VoiceMode, string> = {
   PAKET_SERVIS: "Adrese teslim",
   REZERVE: "Rezerve",
 };
+
+/** FAZ 12C-3 — "HH:MM" → bugünün (geçtiyse yarının) tarihiyle ISO an.
+ *  Sunucu 30 gün + geçmiş kontrolü yapar; burada yalnız yerel ISO üretilir. */
+function reservedIso(hm: string): string | undefined {
+  const m = /^(\d{1,2}):(\d{2})$/.exec(hm.trim());
+  if (!m) return undefined;
+  const d = new Date();
+  d.setHours(Number(m[1]), Number(m[2]), 0, 0);
+  if (d.getTime() < Date.now() - 5 * 60_000) d.setDate(d.getDate() + 1);
+  return d.toISOString();
+}
 
 type Rec = {
   lang: string;
@@ -78,10 +89,16 @@ export default function VoiceAssistant({
   };
   products: VoiceProduct[];
   campaigns: VoiceCampaign[];
-  user: { name: string } | null;
+  user: { name: string; phone?: string | null; address?: string | null } | null;
 }) {
   const [open, setOpen] = useState(false);
-  const [vState, setVState] = useState<VoiceState>(() => ({ ...initialVoiceState(), name: user?.name ?? "" }));
+  // FAZ 12C-3 — oturumdaki cep + adres sipariş formuna OTOMATİK gelir.
+  const [vState, setVState] = useState<VoiceState>(() => ({
+    ...initialVoiceState(),
+    name: user?.name ?? "",
+    phone: user?.phone ?? "",
+    address: user?.address ?? "",
+  }));
   const [ui, setUi] = useState<VoiceUi>("menu");
   const [msgs, setMsgs] = useState<Msg[]>([]);
   const [listening, setListening] = useState(false);
@@ -93,7 +110,12 @@ export default function VoiceAssistant({
   const [campaignViews, setCampaignViews] = useState<Array<{ title: string; discountLabel: string; campaign?: VoiceCampaign }>>([]);
   /** FAZ 12C-2 — ürün listesindeki satır bazlı adet seçici (manuel sipariş). */
   const [qtyPick, setQtyPick] = useState<Record<string, number>>({});
-  const [form, setForm] = useState({ name: user?.name ?? "", phone: "", address: "" });
+  const [form, setForm] = useState({
+    name: user?.name ?? "",
+    phone: user?.phone ?? "",
+    address: user?.address ?? "",
+    reservedAt: "", // FAZ 12C-3 — REZERVE'de zorunlu saat alanı
+  });
   const toast = useToast();
   const pathname = usePathname();
   const loginHref = `/giris?next=${encodeURIComponent(pathname || "/")}`;
@@ -208,14 +230,20 @@ export default function VoiceAssistant({
     toast.push({ title: "Sepetten çıkarıldı", tone: "neutral" });
   }
 
-  /** Sepetteki ödeme seçimi (manuel). */
+  /** Sepetteki ödeme seçimi (manuel). FAZ 12C-3: nakite/karta özel kampanya
+   *  farkı da söylenir — seçilen yöntemde indirim varsa/düşerse müşteri bilir. */
   function pickPayment(m: VoicePayment) {
+    const before = cartBreakdown(vStateRef.current, ctxRef.current).discountCents;
     const next = applyPayment(vStateRef.current, m);
     setVState(next);
     vStateRef.current = next;
-    setLastBreakdown(cartBreakdown(next, ctxRef.current));
+    const b = cartBreakdown(next, ctxRef.current);
+    setLastBreakdown(b);
     setUi("cart");
-    const say = `${m === "CARD_DOOR" ? "Kart" : "Nakit"} ödeme seçildi (${yer}). Sepeti kontrol edip "Sipariş ver" ile gönderebilirsin.`;
+    let say = `${m === "CARD_DOOR" ? "Kart" : "Nakit"} ödeme seçildi (${yer}).`;
+    if (b.discountCents > before) say += " Kampanya indirimi uygulandı.";
+    else if (before > b.discountCents) say += " Seçtiğin ödeme yöntemi bu kampanyanın kapsamı dışında — indirim düştü.";
+    say += ' Sepeti kontrol edip "Sipariş ver" ile gönderebilirsin.';
     push("ai", say);
     speak(say);
   }
@@ -227,10 +255,17 @@ export default function VoiceAssistant({
       toast.push({ title: "Sepet boş", desc: "Menüden ürün ekleyip tekrar dene.", tone: "warning" });
       return;
     }
-    if (!s.name || !s.phone || (s.mode === "PAKET_SERVIS" && !s.address)) {
-      setForm({ name: s.name || form.name, phone: s.phone || form.phone, address: s.address || form.address });
+    // FAZ 12C-3 — REZERVE'de saat zorunlu (masa planı).
+    if (!s.name || !s.phone || (s.mode === "PAKET_SERVIS" && !s.address) || (s.mode === "REZERVE" && !s.reservedAt)) {
+      setForm({
+        name: s.name || form.name,
+        phone: s.phone || form.phone,
+        address: s.address || form.address,
+        reservedAt: s.reservedAt ?? "",
+      });
       setUi("details");
-      const say = `Önce teslimat bilgilerini doldur — ad, telefon${s.mode === "PAKET_SERVIS" ? " ve adres" : ""}.`;
+      const missing = s.mode === "REZERVE" && !s.reservedAt ? " rezerve saat" : "";
+      const say = `Önce teslimat bilgilerini doldur — ad, telefon${s.mode === "PAKET_SERVIS" ? " ve adres" : ""}${missing}.`;
       push("ai", say);
       speak(say);
       return;
@@ -295,6 +330,13 @@ export default function VoiceAssistant({
       toast.push({ title: "Sipariş tipi, sepet veya iletişim bilgisi eksik", tone: "warning" });
       return;
     }
+    // FAZ 12C-3 — REZERVE'de saat zorunlu (masa planı): gitmeden tekrar form.
+    if (s.mode === "REZERVE" && !s.reservedAt) {
+      setForm({ name: s.name, phone: s.phone, address: s.address, reservedAt: "" });
+      setUi("details");
+      toast.push({ title: "Rezerve saat zorunlu", desc: "İşletme masa planını saate göre yapar — saati gir.", tone: "warning" });
+      return;
+    }
     setSending(true);
     try {
       const res = await fetch("/api/voice", {
@@ -314,6 +356,8 @@ export default function VoiceAssistant({
           customerPhone: s.phone,
           customerDistrict: business.district,
           address: s.address,
+          // FAZ 12C-3 — rezervasyon saati (REZERVE'de zorunlu; sunucu da doğrular).
+          ...(s.mode === "REZERVE" && s.reservedAt ? { reservedAt: reservedIso(s.reservedAt) } : {}),
         }),
       });
       const json = await res.json().catch(() => ({ ok: false }) as Record<string, unknown>);
@@ -359,6 +403,8 @@ export default function VoiceAssistant({
 
   const bd = vState.cart.length ? (lastBreakdown ?? cartBreakdown(vState, ctx)) : null;
   const yer = vState.mode === "PAKET_SERVIS" ? "kapıda" : "iş yerinde";
+  // FAZ 12C-3 — ödeme henüz seçili değilse "nakite/karta özel indirim" ipucu.
+  const payHint = paymentScopeHint(vState, ctx);
   const loginBtn = (
     <a href={loginHref}>
       <Button size="sm" variant="primary" className="w-full">Giriş yap / kayıt ol</Button>
@@ -562,6 +608,7 @@ export default function VoiceAssistant({
                         </Button>
                       </div>
                       {vState.payment ? <p className="mt-1 text-[0.72rem] text-positive">Seçili: {vState.payment === "CARD_DOOR" ? "kart" : "nakit"} ({yer}) ✓</p> : null}
+                      {!vState.payment && payHint ? <p className="mt-1 text-[0.72rem] font-semibold text-accent-700">{payHint}</p> : null}
                     </div>
                     {!user ? loginBtn : (
                       <div className="flex gap-2">
@@ -582,9 +629,17 @@ export default function VoiceAssistant({
                 <Input placeholder="Adın" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
                 <Input placeholder="Telefon" inputMode="tel" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} />
                 {vState.mode === "PAKET_SERVIS" ? <Input placeholder="Adres (mahalle, sokak, kapı no)" value={form.address} onChange={(e) => setForm({ ...form, address: e.target.value })} /> : null}
+                {/* FAZ 12C-3 — REZERVE'de saat zorunlu (masa planı). */}
+                {vState.mode === "REZERVE" ? (
+                  <Input type="time" aria-label="Rezerve saat" value={form.reservedAt} onChange={(e) => setForm({ ...form, reservedAt: e.target.value })} />
+                ) : null}
                 <Button size="sm" onClick={() => {
-                  if (!form.name.trim() || !form.phone.trim() || (vState.mode === "PAKET_SERVIS" && !form.address.trim())) {
-                    toast.push({ title: "Ad ve telefon zorunlu", desc: vState.mode === "PAKET_SERVIS" ? "Adrese teslimde adres de gerekli." : "Eksik alanları doldur.", tone: "warning" });
+                  if (!form.name.trim() || !form.phone.trim() || (vState.mode === "PAKET_SERVIS" && !form.address.trim()) || (vState.mode === "REZERVE" && !form.reservedAt.trim())) {
+                    toast.push({
+                      title: "Ad ve telefon zorunlu",
+                      desc: vState.mode === "PAKET_SERVIS" ? "Adrese teslimde adres de gerekli." : vState.mode === "REZERVE" ? "Rezerve siparişte saat zorunlu — masa planı için." : "Eksik alanları doldur.",
+                      tone: "warning",
+                    });
                     return;
                   }
                   const next = applyDetails(vStateRef.current, form);
@@ -592,7 +647,7 @@ export default function VoiceAssistant({
                   vStateRef.current = next;
                   setLastBreakdown(next.cart.length ? cartBreakdown(next, ctxRef.current) : null);
                   setUi("cart");
-                  const say = `${next.name}, kaydettim. Ödeme yöntemini seçip "Sipariş ver" ile gönderebilirsin.`;
+                  const say = `${next.name}, kaydettim.${next.mode === "REZERVE" && next.reservedAt ? ` Rezerve saat ${next.reservedAt}.` : ""} Ödeme yöntemini seçip "Sipariş ver" ile gönderebilirsin.`;
                   push("ai", say);
                   speak(say);
                 }}>Devam</Button>
@@ -628,6 +683,8 @@ export default function VoiceAssistant({
                 </ul>
                 <p className="text-[0.85rem] text-muted">{vState.name} · {vState.phone}</p>
                 {vState.address ? <p className="text-[0.85rem] text-muted">{vState.address}</p> : null}
+                {/* FAZ 12C-3 — rezerve saati özet satırı (masa planı). */}
+                {vState.mode === "REZERVE" && vState.reservedAt ? <p className="text-[0.85rem] font-semibold text-accent-700">Rezerve saat: {vState.reservedAt}</p> : null}
                 {bd ? (
                   <div className="space-y-0.5 border-t border-line-soft pt-1.5">
                     {breakdownLines(bd).map((ln, i) => (

@@ -40,6 +40,32 @@ function cam(row: Row | null): Row | null {
 }
 
 /* ================================================================== *
+ * FAZ 12D — medya yardımcıları (kapak / galeri / storyboard sahnesi)
+ * ================================================================== */
+
+const MEDIA_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** FAZ 12D — video_assets.scenes[idx].image günceller (diğer sahne alanları korunur).
+ *  Yetki: RLS (işletme üyesi kendi satırı; admin tüm satırlar — bkz. migration 0003). */
+async function setSceneImage(client: Awaited<ReturnType<typeof sb>>, videoId: string, index: number, image: string | null) {
+  if (!MEDIA_UUID_RE.test(videoId)) throw new ActionError(400, "Geçersiz video kimliği.");
+  const { data: row, error } = await client.from("video_assets").select("id, scenes").eq("id", videoId).maybeSingle();
+  if (error) fail(error);
+  if (!row) throw new ActionError(404, "Video bulunamadı.");
+  const scenes = Array.isArray(row.scenes) ? [...(row.scenes as Row[])] : [];
+  if (index >= scenes.length) throw new ActionError(404, "Sahne bulunamadı.");
+  scenes[index] = { ...(scenes[index] as Row), image };
+  const { error: e2 } = await client.from("video_assets").update({ scenes }).eq("id", videoId);
+  if (e2) fail(e2);
+}
+
+/** FAZ 12D — public URL'den business-media object yolunu çözer (dosya temizliği için). */
+function mediaPathOf(url: string): string | null {
+  const p = String(url ?? "").split("/object/public/business-media/")[1] ?? "";
+  return p && !p.includes("..") && p.length <= 300 ? p : null;
+}
+
+/* ================================================================== *
  * QR / KAMPANYA KULLANIMI — tüm geçişler dv_* RPC'leriyledir
  * ================================================================== */
 
@@ -671,6 +697,96 @@ export async function businessAction(actor: BusinessActorLite, body: Row) {
     return Response.json({ ok: true, video: cam(row as Row) });
   }
 
+  /* ---------- FAZ 12D — işletme medyası: kapak / galeri / storyboard sahnesi ---------- */
+
+  if (action === "cover") {
+    // Kapak/banner: dosya business-media'ya (public) yüklenir; burada yol+URL
+    // doğrulanır ve businesses.cover_image yazılır (public sayfa bandı okur).
+    const storagePath = String(body.storagePath ?? "");
+    const url = String(body.url ?? "");
+    if (url) {
+      if (
+        !storagePath.startsWith(`${actor.businessId}/`) ||
+        storagePath.length > 300 ||
+        storagePath.includes("..") ||
+        !url.includes(`/object/public/business-media/${storagePath}`)
+      )
+        throw new ActionError(400, "Geçersiz görsel yolu.");
+    }
+    const { data: row, error } = await client
+      .from("businesses")
+      .update({ cover_image: url ? url.slice(0, 600) : null })
+      .eq("id", actor.businessId)
+      .select("id")
+      .maybeSingle();
+    if (error) fail(error);
+    if (!row) throw new ActionError(404, "İşletme bulunamadı.");
+    await logAudit(actor.email, actor.staffRole, "BUSINESS_COVER_SET", "businesses", actor.businessId, { url: Boolean(url) });
+    return Response.json({ ok: true, coverImage: url || null });
+  }
+
+  if (action === "media_add") {
+    // "İşletmeden kareler" galerisi: public bucket → public URL → business_media.
+    const storagePath = String(body.storagePath ?? "");
+    const url = String(body.url ?? "");
+    if (
+      !storagePath.startsWith(`${actor.businessId}/`) ||
+      storagePath.length > 300 ||
+      storagePath.includes("..") ||
+      !url.includes(`/object/public/business-media/${storagePath}`)
+    )
+      throw new ActionError(400, "Geçersiz görsel yolu.");
+    const caption = String(body.caption ?? "").trim().slice(0, 120);
+    // Yumuşak sınır: işletme başına 24 kare (istismarı ve maliyet patlamasını önler).
+    const { count } = await client
+      .from("business_media")
+      .select("id", { count: "exact", head: true })
+      .eq("business_id", actor.businessId);
+    if ((count ?? 0) >= 24) throw new ActionError(400, "Galeri sınırına ulaşıldı (en fazla 24 kare).");
+    const { data: row, error } = await client
+      .from("business_media")
+      .insert({ business_id: actor.businessId, kind: "IMAGE", url: url.slice(0, 600), caption: caption || null, sort_order: count ?? 0 })
+      .select("*")
+      .maybeSingle();
+    if (error || !row) fail(error);
+    await logAudit(actor.email, actor.staffRole, "MEDIA_ADDED", "business_media", str(row.id), { storagePath });
+    return Response.json({ ok: true, media: cam(row as Row) });
+  }
+
+  if (action === "media_delete") {
+    const mediaId = String(body.id ?? "");
+    if (!MEDIA_UUID_RE.test(mediaId)) throw new ActionError(400, "Geçersiz kimlik.");
+    const { data: row } = await client
+      .from("business_media")
+      .select("id, url")
+      .eq("id", mediaId)
+      .eq("business_id", actor.businessId)
+      .maybeSingle();
+    if (!row) throw new ActionError(404, "Galeri görseli bulunamadı.");
+    const { error } = await client.from("business_media").delete().eq("id", str(row.id));
+    if (error) fail(error);
+    // En iyi çaba: storage dosyası da kaldırılsın (başarısızsa kayıt zaten düşmüştür).
+    const path = mediaPathOf(String(row.url ?? ""));
+    if (path) await client.storage.from("business-media").remove([path]).catch(() => undefined);
+    await logAudit(actor.email, actor.staffRole, "MEDIA_DELETED", "business_media", str(row.id), {});
+    return Response.json({ ok: true });
+  }
+
+  if (action === "scene_image") {
+    // Storyboard sahne görseli: video_assets.scenes[i].image (public bucket URL).
+    const videoId = String(body.videoId ?? "");
+    const index = Number(body.index ?? -1);
+    if (!Number.isInteger(index) || index < 0 || index > 99) throw new ActionError(400, "Geçersiz sahne.");
+    const image = typeof body.image === "string" && body.image ? body.image.slice(0, 600) : null;
+    if (image && !image.includes("/object/public/business-media/")) throw new ActionError(400, "Geçersiz görsel adresi.");
+    // Sahiplik: RLS member UPDATE (migration 0003) kendi işini korur; açık kontrol de.
+    const { data: own } = await client.from("video_assets").select("id, business_id").eq("id", videoId).maybeSingle();
+    if (!own || str(own.business_id) !== actor.businessId) throw new ActionError(404, "Video bulunamadı.");
+    await setSceneImage(client, videoId, index, image);
+    await logAudit(actor.email, actor.staffRole, "SCENE_IMAGE_SET", "video_assets", videoId, { index, image: Boolean(image) });
+    return Response.json({ ok: true });
+  }
+
   /* FAZ 12A — Sesli/web sipariş durum güncellemesi (MANAGER/OWNER). */
   if (action === "order_status") {
     const id = String(body.id ?? "");
@@ -873,6 +989,113 @@ export async function adminAction(user: SessionUserLite, body: Row) {
       if (!row) throw new ActionError(404, "İşletme bulunamadı.");
       await logAudit(user.email, "ADMIN", "BUSINESS_VERIFY", "businesses", id, { verified: row.verified });
       return Response.json({ ok: true, business: cam(row as Row) });
+    }
+
+    /* ---------- FAZ 12D — admin medya yönetimi (kapak / galeri / video / sahne) ---------- */
+
+    case "business_cover": {
+      // Admin herhangi bir işletmenin kapak/banner görselini yükleyebilir/kaldırabilir.
+      if (!MEDIA_UUID_RE.test(id)) throw new ActionError(400, "İşletme gerekli.");
+      const storagePath = String(body.storagePath ?? "");
+      const url = String(body.url ?? "");
+      if (url) {
+        if (
+          !storagePath.startsWith(`${id}/`) ||
+          storagePath.length > 300 ||
+          storagePath.includes("..") ||
+          !url.includes(`/object/public/business-media/${storagePath}`)
+        )
+          throw new ActionError(400, "Geçersiz görsel yolu.");
+      }
+      const { data: row, error } = await client
+        .from("businesses")
+        .update({ cover_image: url ? url.slice(0, 600) : null })
+        .eq("id", id)
+        .select("id")
+        .maybeSingle();
+      if (error) fail(error);
+      if (!row) throw new ActionError(404, "İşletme bulunamadı.");
+      await logAudit(user.email, "ADMIN", "BUSINESS_COVER_SET", "businesses", id, { url: Boolean(url) });
+      return Response.json({ ok: true });
+    }
+
+    case "business_media_add": {
+      const businessId = String(body.business_id ?? "");
+      if (!MEDIA_UUID_RE.test(businessId)) throw new ActionError(400, "İşletme gerekli.");
+      const storagePath = String(body.storagePath ?? "");
+      const url = String(body.url ?? "");
+      if (
+        !storagePath.startsWith(`${businessId}/`) ||
+        storagePath.length > 300 ||
+        storagePath.includes("..") ||
+        !url.includes(`/object/public/business-media/${storagePath}`)
+      )
+        throw new ActionError(400, "Geçersiz görsel yolu.");
+      const caption = String(body.caption ?? "").trim().slice(0, 120);
+      const { count } = await client
+        .from("business_media")
+        .select("id", { count: "exact", head: true })
+        .eq("business_id", businessId);
+      if ((count ?? 0) >= 24) throw new ActionError(400, "Galeri sınırına ulaşıldı (en fazla 24 kare).");
+      const { data: row, error } = await client
+        .from("business_media")
+        .insert({ business_id: businessId, kind: "IMAGE", url: url.slice(0, 600), caption: caption || null, sort_order: count ?? 0 })
+        .select("*")
+        .maybeSingle();
+      if (error || !row) fail(error);
+      await logAudit(user.email, "ADMIN", "MEDIA_ADDED", "business_media", str(row.id), { businessId, storagePath });
+      return Response.json({ ok: true, media: cam(row as Row) });
+    }
+
+    case "business_media_delete": {
+      const mediaId = String(body.id ?? "");
+      if (!MEDIA_UUID_RE.test(mediaId)) throw new ActionError(400, "Geçersiz kimlik.");
+      const { data: row } = await client.from("business_media").select("id, url").eq("id", mediaId).maybeSingle();
+      if (!row) throw new ActionError(404, "Galeri görseli bulunamadı.");
+      const { error } = await client.from("business_media").delete().eq("id", str(row.id));
+      if (error) fail(error);
+      const path = mediaPathOf(String(row.url ?? ""));
+      if (path) await client.storage.from("business-media").remove([path]).catch(() => undefined);
+      await logAudit(user.email, "ADMIN", "MEDIA_DELETED", "business_media", str(row.id), {});
+      return Response.json({ ok: true });
+    }
+
+    case "video_upload_admin": {
+      // Admin, seçtiği işletmenin video kütüphanesine video yükler
+      // (storage yolu o işletmenin klasöründe; business-video private bucket).
+      const businessId = String(body.business_id ?? "");
+      if (!MEDIA_UUID_RE.test(businessId)) throw new ActionError(400, "İşletme gerekli.");
+      const storagePath = String(body.storagePath ?? "");
+      if (!storagePath.startsWith(`${businessId}/`) || storagePath.length > 300 || storagePath.includes(".."))
+        throw new ActionError(400, "Geçersiz dosya yolu.");
+      const title = String(body.title ?? "Yüklenen video").slice(0, 120);
+      const { data: row, error } = await client
+        .from("video_assets")
+        .insert({
+          business_id: businessId,
+          kind: "UPLOADED_EDIT",
+          topic: "UPLOADED_EDIT",
+          title,
+          storage_path: storagePath,
+          status: "DRAFT",
+          created_by: user.email,
+        })
+        .select("*")
+        .maybeSingle();
+      if (error || !row) fail(error);
+      await logAudit(user.email, "ADMIN", "VIDEO_UPLOADED", "video_assets", str(row.id), { businessId, storagePath });
+      return Response.json({ ok: true, video: cam(row as Row) });
+    }
+
+    case "scene_image": {
+      const videoId = String(body.videoId ?? "");
+      const index = Number(body.index ?? -1);
+      if (!Number.isInteger(index) || index < 0 || index > 99) throw new ActionError(400, "Geçersiz sahne.");
+      const image = typeof body.image === "string" && body.image ? body.image.slice(0, 600) : null;
+      if (image && !image.includes("/object/public/business-media/")) throw new ActionError(400, "Geçersiz görsel adresi.");
+      await setSceneImage(client, videoId, index, image);
+      await logAudit(user.email, "ADMIN", "SCENE_IMAGE_SET", "video_assets", videoId, { index, image: Boolean(image) });
+      return Response.json({ ok: true });
     }
     case "business_plan": {
       const planCode = String(body.planCode ?? "");

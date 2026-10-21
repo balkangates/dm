@@ -301,7 +301,7 @@ export async function getBusinessBySlug(slug: string) {
     client.from("business_hours").select("*").eq("business_id", businessId),
     // Pasif ürünler müşteri menüsünde/gizli sayfada görünmez (YÖNETİM paneli tümünü gösterir).
     client.from("products").select("*").eq("business_id", businessId).eq("active", true),
-    client.from("business_media").select("*").eq("business_id", businessId),
+    client.from("business_media").select("*").eq("business_id", businessId).order("sort_order", { ascending: true }),
     client.from("reviews").select("*").eq("business_id", businessId).order("created_at", { ascending: false }),
     client.from("campaigns").select(CARD_SELECT).eq("business_id", businessId).eq("status", "PUBLISHED"),
     client.from("business_staff").select("*").eq("business_id", businessId),
@@ -554,7 +554,7 @@ export async function getBusinessData(businessId: string, days = 14) {
   const { data: biz } = await client.from("businesses").select("*").eq("id", businessId).maybeSingle();
   if (!biz) return null;
 
-  const [hours, camps, qr, usages, staff, ads, contents, plans, pkgs, invs, feeRules, bonusRows, events, labels, refTotal, prods, svcs, growthRows, videoCount, orderRows] =
+  const [hours, camps, qr, usages, staff, ads, contents, plans, pkgs, invs, feeRules, bonusRows, events, labels, refTotal, prods, svcs, growthRows, videoCount, orderRows, mediaRows] =
     await Promise.all([
       client.from("business_hours").select("*").eq("business_id", businessId),
       client.from("campaigns").select("*").eq("business_id", businessId).order("created_at", { ascending: false }),
@@ -582,6 +582,8 @@ export async function getBusinessData(businessId: string, days = 14) {
       client.from("video_assets").select("id", { count: "exact", head: true }).eq("business_id", businessId),
       // FAZ 12A — sesli asistan/web siparişleri (kapıda ödeme akışı).
       client.from("orders").select("*").eq("business_id", businessId).order("created_at", { ascending: false }).limit(60),
+      // FAZ 12D — "İşletmeden kareler" galerisi (panel yönetimi + kapakla birlikte).
+      client.from("business_media").select("*").eq("business_id", businessId).order("sort_order", { ascending: true }),
     ]);
 
   const planRow = ((plans.data ?? []) as Row[])[0] ?? null;
@@ -630,6 +632,15 @@ export async function getBusinessData(businessId: string, days = 14) {
 
   return {
     biz: mapBusiness(biz as Row),
+    // FAZ 12D — "İşletmeden kareler" galerisi (public sayfada zaten okunuyordu; panel de yönetsin diye).
+    media: ((mediaRows.data ?? []) as Row[]).map((m) => ({
+      id: str(m.id),
+      businessId: str(m.business_id),
+      kind: str(m.kind),
+      url: nul(m.url),
+      caption: nul(m.caption),
+      sortOrder: n(m.sort_order),
+    })),
     // AI motorunun işletme profil/ürün/hizmetlere göre uyumlu içerik üretmesi için (istek c).
     products: ((prods.data ?? []) as Row[]).map((p) => ({
       id: str(p.id),
@@ -1481,7 +1492,7 @@ export async function listVideos(topic?: string) {
     title: str(v.title),
     kind: str(v.kind),
     durationSec: n(v.duration_sec),
-    scenes: (v.scenes as { at: string; visual: string; caption: string }[]) ?? [],
+    scenes: (v.scenes as { at: string; visual: string; caption: string; image?: string | null }[]) ?? [],
     captions: (v.captions as Record<string, string[]>) ?? {},
     steps: (v.steps as string[]) ?? [],
     poster: nul(v.poster),

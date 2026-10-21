@@ -70,7 +70,7 @@ function profileMissingOf(vals: ProfileForm | Record<string, unknown>): string[]
 
 export type StudioVideo = {
   id: string; topic: string; title: string; durationSec: number;
-  scenes: { at: string; visual: string; caption: string }[];
+  scenes: { at: string; visual: string; caption: string; image?: string | null }[];
   captions: Record<string, string[]>; steps: string[]; poster: string | null;
   storagePath: string | null;
   renderStatus: string; status: string;
@@ -391,6 +391,80 @@ function ProfileSection({ d, onPost, lang }: { d: BD; onPost: (r: string, b: Rec
   const missingNow = profileMissingOf(f);
   const filledAll = [...PROFILE_REQUIRED, ...PROFILE_OPTIONAL].filter((r) => String(f[r.key] ?? "").trim().length >= 2).length;
   const pctComplete = Math.round((filledAll / (PROFILE_REQUIRED.length + PROFILE_OPTIONAL.length)) * 100);
+
+  /* ---------- FAZ 12D — kapak (banner) + "İşletmeden kareler" galeri yüklemesi ---------- */
+  const [mediaBusy, setMediaBusy] = useState<string | null>(null);
+  const [galleryCaption, setGalleryCaption] = useState("");
+
+  function checkImage(file: File): boolean {
+    if (!["image/jpeg", "image/png", "image/webp"].includes(file.type)) {
+      toast.push({ title: "Geçersiz dosya türü", desc: "Yalnızca JPG, PNG veya WebP yüklenebilir.", tone: "danger" });
+      return false;
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      toast.push({ title: "Dosya çok büyük", desc: "Görsel en fazla 5MB olabilir.", tone: "danger" });
+      return false;
+    }
+    return true;
+  }
+
+  /** Dosyayı PUBLIC business-media bucket'ına yükler (yol her zaman işletme klasöründe). */
+  async function uploadToBusinessMedia(file: File, name: string): Promise<{ path: string; url: string } | null> {
+    const sb = getBrowserSupabase();
+    const ext = file.type === "image/png" ? "png" : file.type === "image/webp" ? "webp" : "jpg";
+    const path = `${d.biz.id}/${name}-${crypto.randomUUID()}.${ext}`;
+    const { data, error } = await sb.storage.from("business-media").upload(path, file, { contentType: file.type, upsert: false });
+    if (error) {
+      toast.push({ title: "Yükleme başarısız", desc: error.message, tone: "danger" });
+      return null;
+    }
+    const { data: pub } = sb.storage.from("business-media").getPublicUrl(data.path);
+    return { path: data.path, url: pub.publicUrl };
+  }
+
+  async function uploadCover(file: File) {
+    if (!checkImage(file)) return;
+    setMediaBusy("cover-up");
+    try {
+      const up = await uploadToBusinessMedia(file, "cover");
+      if (up) await onPost("/api/business", { action: "cover", storagePath: up.path, url: up.url }, "Kapak görseli güncellendi");
+    } finally {
+      setMediaBusy(null);
+    }
+  }
+
+  async function clearCover() {
+    setMediaBusy("cover-clear");
+    try {
+      await onPost("/api/business", { action: "cover", storagePath: "", url: "" }, "Kapak görseli kaldırıldı");
+    } finally {
+      setMediaBusy(null);
+    }
+  }
+
+  async function addGallery(file: File) {
+    if (!checkImage(file)) return;
+    setMediaBusy("gallery-add");
+    try {
+      const up = await uploadToBusinessMedia(file, "kare");
+      if (up) {
+        await onPost("/api/business", { action: "media_add", storagePath: up.path, url: up.url, caption: galleryCaption }, "Kare galeriye eklendi");
+        setGalleryCaption("");
+      }
+    } finally {
+      setMediaBusy(null);
+    }
+  }
+
+  async function deleteGallery(id: string) {
+    setMediaBusy(`gallery-${id}`);
+    try {
+      await onPost("/api/business", { action: "media_delete", id }, "Kare silindi");
+    } finally {
+      setMediaBusy(null);
+    }
+  }
+
   return (
     <div>
       <DashSectionHead eyebrow={t2(lang)} title="İşletme profili" desc="Bu bilgiler kamuya açık işletme sayfanda, aramada ve AI içerik üretiminde kullanılır." />
@@ -435,6 +509,99 @@ function ProfileSection({ d, onPost, lang }: { d: BD; onPost: (r: string, b: Rec
           <div className="md:col-span-2"><Button type="submit" loading={busy}>Değişiklikleri kaydet</Button></div>
         </form>
       </Card>
+
+      {/* FAZ 12D — kapak (banner): public işletme sayfasının üst bandı */}
+      <div className="mt-6">
+        <Card>
+          <p className="mb-1 text-[0.72rem] font-semibold uppercase tracking-[0.14em] text-muted">Kapak görseli (banner)</p>
+          <p className="mb-3 text-[0.82rem] leading-relaxed text-muted">
+            Kamuya açık işletme sayfanın üst bandında görünür. JPG, PNG veya WebP — en fazla 5MB.
+          </p>
+          <div className="flex flex-wrap items-start gap-4">
+            <div className="h-24 w-40 shrink-0 overflow-hidden rounded-[4px] border border-line bg-canvas">
+              {d.biz.coverImage ? (
+                <img src={d.biz.coverImage} alt="Kapak görseli" className="h-full w-full object-cover" />
+              ) : (
+                <span className="flex h-full items-center justify-center text-[0.72rem] text-muted">Kapak yok</span>
+              )}
+            </div>
+            <div className="flex flex-col items-start gap-2">
+              <label className={`inline-flex h-9 shrink-0 items-center gap-1.5 rounded-[4px] border-2 border-dashed px-3 text-[0.8rem] font-medium ${mediaBusy ? "cursor-wait border-line text-muted" : "cursor-pointer border-line text-ink-700 hover:border-accent hover:text-accent"}`}>
+                <Icon.upload size={14} />
+                {mediaBusy === "cover-up" ? "Yükleniyor…" : "Kapak yükle"}
+                <input
+                  type="file"
+                  accept="image/jpeg,image/png,image/webp"
+                  className="sr-only"
+                  disabled={!!mediaBusy}
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    e.target.value = "";
+                    if (file) void uploadCover(file);
+                  }}
+                />
+              </label>
+              {d.biz.coverImage ? (
+                <Button size="sm" variant="secondary" loading={mediaBusy === "cover-clear"} onClick={() => void clearCover()}>Kapağı kaldır</Button>
+              ) : null}
+            </div>
+          </div>
+        </Card>
+      </div>
+
+      {/* FAZ 12D — "İşletmeden kareler" galerisi */}
+      <div className="mt-6">
+        <Card>
+          <p className="mb-1 text-[0.72rem] font-semibold uppercase tracking-[0.14em] text-muted">İşletmeden kareler (galeri)</p>
+          <p className="mb-3 text-[0.82rem] leading-relaxed text-muted">
+            Yüklediğin görseller kamuya açık sayfanda &quot;Galeri&quot; bölümünde sergilenir. Her biri en fazla 5MB; işletme başına en fazla 24 kare.
+          </p>
+          <div className="mb-4 flex flex-wrap items-end gap-3">
+            <Field label="Altyazı (isteğe bağlı)">
+              <Input value={galleryCaption} maxLength={120} placeholder="Örn. Hafta sonu menüsü" onChange={(e) => setGalleryCaption(e.target.value)} />
+            </Field>
+            <label className={`inline-flex h-9 shrink-0 items-center gap-1.5 rounded-[4px] border-2 border-dashed px-3 text-[0.8rem] font-medium ${mediaBusy === "gallery-add" ? "cursor-wait border-line text-muted" : "cursor-pointer border-line text-ink-700 hover:border-accent hover:text-accent"}`}>
+              <Icon.upload size={14} />
+              {mediaBusy === "gallery-add" ? "Yükleniyor…" : "Kare yükle"}
+              <input
+                type="file"
+                accept="image/jpeg,image/png,image/webp"
+                className="sr-only"
+                disabled={!!mediaBusy}
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  e.target.value = "";
+                  if (file) void addGallery(file);
+                }}
+              />
+            </label>
+          </div>
+          {d.media.length ? (
+            <div className="grid grid-cols-3 gap-3 sm:grid-cols-4">
+              {d.media.map((mm) => (
+                <figure key={mm.id} className="relative overflow-hidden rounded-[4px] border border-line">
+                  <div className="aspect-[4/3] bg-canvas">
+                    {mm.url ? <img src={mm.url} alt={mm.caption ?? ""} loading="lazy" className="h-full w-full object-cover" /> : null}
+                  </div>
+                  {mm.caption ? <figcaption className="truncate px-2 py-1 text-[0.7rem] text-muted">{mm.caption}</figcaption> : null}
+                  <button
+                    type="button"
+                    aria-label="Kareyi sil"
+                    disabled={mediaBusy !== null}
+                    className="absolute right-1 top-1 flex h-6 w-6 items-center justify-center rounded-[3px] border border-line bg-surface/90 text-[0.85rem] leading-none text-danger hover:border-danger disabled:opacity-50"
+                    onClick={() => void deleteGallery(mm.id)}
+                  >
+                    ✕
+                  </button>
+                </figure>
+              ))}
+            </div>
+          ) : (
+            <p className="text-[0.82rem] text-muted">Henüz kare yüklenmedi.</p>
+          )}
+        </Card>
+      </div>
+
       <div className="mt-6"><Card><p className="mb-3 text-[0.72rem] font-semibold uppercase tracking-[0.14em] text-muted">Çalışma saatleri</p>
         <ul className="space-y-2">{d.hours.map((h) => (<li key={h.id} className="flex items-center justify-between border-b border-line-soft pb-2 text-[0.85rem] last:border-0">
           <span className="text-ink-700">{["Pazar", "Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma", "Cumartesi"][h.dayOfWeek]}</span>
@@ -1953,6 +2120,48 @@ function StudioSection({ d, post, videos, lang }: { d: BD; post: (r: string, b: 
     }
   }
 
+  /* ---------- FAZ 12D — storyboard sahne görselleri (public bucket + scene_image) ---------- */
+  const [sceneBusy, setSceneBusy] = useState<string | null>(null);
+
+  async function uploadSceneImage(videoId: string, idx: number, file: File) {
+    if (!["image/jpeg", "image/png", "image/webp"].includes(file.type)) {
+      toast.push({ title: "Geçersiz dosya türü", desc: "Yalnızca JPG, PNG veya WebP yüklenebilir.", tone: "danger" });
+      return;
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      toast.push({ title: "Dosya çok büyük", desc: "Görsel en fazla 5MB olabilir.", tone: "danger" });
+      return;
+    }
+    setSceneBusy(`${videoId}:${idx}`);
+    try {
+      const sb = getBrowserSupabase();
+      const ext = file.type === "image/png" ? "png" : file.type === "image/webp" ? "webp" : "jpg";
+      const path = `${d.biz.id}/sahne-${crypto.randomUUID()}.${ext}`;
+      const { data, error } = await sb.storage.from("business-media").upload(path, file, { contentType: file.type, upsert: false });
+      if (error) {
+        toast.push({ title: "Yükleme başarısız", desc: error.message, tone: "danger" });
+        return;
+      }
+      const { data: pub } = sb.storage.from("business-media").getPublicUrl(data.path);
+      await post("/api/business", { action: "scene_image", videoId, index: idx, image: pub.publicUrl }, "Sahne görseli eklendi");
+    } catch {
+      toast.push({ title: "Yükleme başarısız", desc: "Ağ hatası oluştu; tekrar dene.", tone: "danger" });
+    } finally {
+      setSceneBusy(null);
+    }
+  }
+
+  async function clearSceneImage(videoId: string, idx: number) {
+    setSceneBusy(`${videoId}:${idx}`);
+    try {
+      await post("/api/business", { action: "scene_image", videoId, index: idx, image: null }, "Sahne görseli kaldırıldı");
+    } finally {
+      setSceneBusy(null);
+    }
+  }
+
+  const sceneVideos = videos.filter((v) => v.scenes.length > 0);
+
   const businessVideos = videos.filter((v) =>
     ["HOW_BUSINESS_CAMPAIGN_WORKS", "HOW_AI_PROGRAM_WORKS", "HOW_TO_READ_ANALYTICS", "HOW_QR_TRACKING_WORKS"].includes(v.topic)
   );
@@ -2113,6 +2322,65 @@ function StudioSection({ d, post, videos, lang }: { d: BD; post: (r: string, b: 
                   </li>
                 ))}
               </ul>
+            </Card>
+          ) : null}
+
+          {/* FAZ 12D — storyboard sahne görselleri */}
+          {sceneVideos.length > 0 ? (
+            <Card padded={false}>
+              <p className="border-b-2 border-line px-4 py-3 font-display text-[1rem] font-bold">Storyboard sahne görselleri</p>
+              <p className="border-b-2 border-line-soft px-4 py-3 text-[0.8rem] leading-relaxed text-muted">
+                Her sahneye kendi görselini yükle; oynatıcıda &quot;Storyboard · sahne X/Y&quot; ekranında arka plan olarak görünür. JPG, PNG veya WebP — en fazla 5MB.
+              </p>
+              {sceneVideos.map((v) => (
+                <div key={v.id} className="border-b-2 border-line-soft px-4 py-3 last:border-b-0">
+                  <p className="text-[0.86rem] font-semibold text-ink">{v.title}</p>
+                  <div className="mt-2 grid grid-cols-1 gap-3 sm:grid-cols-2">
+                    {v.scenes.slice(0, 16).map((s, i) => {
+                      const key = `${v.id}:${i}`;
+                      return (
+                        <div key={i} className="flex items-start gap-3 rounded-[4px] border border-line p-2">
+                          <div className="h-14 w-20 shrink-0 overflow-hidden rounded-[3px] border border-line bg-canvas">
+                            {s.image ? <img src={s.image} alt="" loading="lazy" className="h-full w-full object-cover" /> : (
+                              <span className="flex h-full items-center justify-center text-[0.7rem] text-muted">görsel yok</span>
+                            )}
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <p className="text-[0.7rem] font-bold uppercase tracking-[0.1em] text-muted">Sahne {i + 1}/{v.scenes.length}</p>
+                            <p className="truncate text-[0.76rem] text-ink-700" title={s.visual}>{s.visual}</p>
+                            <div className="mt-1.5 flex flex-wrap gap-1.5">
+                              <label className={`inline-flex cursor-pointer items-center gap-1 border border-line px-2 py-1 text-[0.7rem] font-medium ${sceneBusy ? "cursor-wait text-muted" : "text-ink-700 hover:border-accent hover:text-accent"}`}>
+                                {sceneBusy === key ? "Yükleniyor…" : s.image ? "Değiştir" : "Görsel yükle"}
+                                <input
+                                  type="file"
+                                  accept="image/jpeg,image/png,image/webp"
+                                  className="sr-only"
+                                  disabled={sceneBusy !== null}
+                                  onChange={(e) => {
+                                    const file = e.target.files?.[0];
+                                    e.target.value = "";
+                                    if (file) void uploadSceneImage(v.id, i, file);
+                                  }}
+                                />
+                              </label>
+                              {s.image ? (
+                                <button
+                                  type="button"
+                                  disabled={sceneBusy !== null}
+                                  className="border border-line px-2 py-1 text-[0.7rem] font-medium text-danger hover:border-danger disabled:opacity-50"
+                                  onClick={() => void clearSceneImage(v.id, i)}
+                                >
+                                  Kaldır
+                                </button>
+                              ) : null}
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              ))}
             </Card>
           ) : null}
 

@@ -1624,7 +1624,7 @@ export function Journey({
  * açıkça etiketler. Ses otomatik oynatılmaz.
  * ================================================================== */
 
-export type StoryScene = { at: string; visual: string; caption: string };
+export type StoryScene = { at: string; visual: string; caption: string; image?: string | null };
 
 export function VideoModule({
   title,
@@ -1673,7 +1673,13 @@ export function VideoModule({
   return (
     <div className="card overflow-hidden p-0">
       <div className="relative aspect-video w-full overflow-hidden bg-ink">
-        {poster ? (
+        {/* FAZ 12D — sahne görseli varsa o GÖSTERİLİR; yoksa poster (video kapak). */}
+        {scene?.image ? (
+          <>
+            <img src={scene.image} alt="" loading="lazy" className="absolute inset-0 h-full w-full object-cover opacity-70" />
+            <div className="absolute inset-0 bg-gradient-to-t from-ink/85 via-ink/35 to-ink/60" />
+          </>
+        ) : poster ? (
           <img src={poster} alt="" className="absolute inset-0 h-full w-full object-cover opacity-45" />
         ) : null}
         <div className="grain absolute inset-0" />

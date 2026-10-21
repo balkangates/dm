@@ -29,6 +29,8 @@ export async function POST(req: Request) {
 
   if (action === "profile" && !staffCan(actor.staffRole, "profile.write"))
     return jsonError(403, `${actor.staffRole} rolü işletme profilini düzenleyemez.`);
+  if ((action === "cover" || action === "media_add" || action === "media_delete") && !staffCan(actor.staffRole, "profile.write"))
+    return jsonError(403, `${actor.staffRole} rolü işletme medyasını (kapak/galeri) düzenleyemez.`);
   if (action === "hours" && !staffCan(actor.staffRole, "profile.write")) return jsonError(403, "Yetkiniz yok.");
   if (action === "settings_save" && !staffCan(actor.staffRole, "profile.write"))
     return jsonError(403, "Sipariş ayarlarını düzenlemek için yetkiniz yok.");

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import {
   Badge, BarChart, Button, Card, Dialog, EmptyState, Field, Funnel, Icon, Input, Kpi, Notice, Pagination, QrPanel, Select,
   Table, Td, Th, Toggle, useToast,
@@ -8,6 +8,7 @@ import {
 import { DashSectionHead, StatusBadge, type NavItem } from "@/components/Dash";
 import { money, num, pct, shortDate, type Currency, type Lang } from "@/lib/money";
 import type { getAdminData } from "@/lib/queries";
+import { getBrowserSupabase } from "@/lib/supabase/client";
 
 export type AdminData = Awaited<ReturnType<typeof getAdminData>>;
 
@@ -36,13 +37,361 @@ export const ADMIN_NAV: NavItem[] = [
 
 export type AffiliateData = Awaited<ReturnType<typeof import("@/lib/queries").getAffiliateData>>;
 
+/* ================================================================== *
+ * FAZ 12D — admin medya yönetimi
+ * (kapak/banner · "İşletmeden kareler" galerisi · video kütüphanesi ·
+ *  storyboard sahne görselleri — işletme panelindeki akışların admin karşılığı)
+ * ================================================================== */
+
+type AdminMediaItem = { id: string; url: string | null; caption: string | null };
+type AdminMediaVideo = {
+  id: string;
+  title: string;
+  storagePath: string | null;
+  scenes: { at: string; visual: string; caption: string; image?: string | null }[];
+};
+
+/** Özel (private) bucket'taki videoyu imzalı URL ile oynatır (admin oturumu). */
+function AdminSignedVideo({ path }: { path: string }) {
+  const [url, setUrl] = useState<string | null>(null);
+  const [failed, setFailed] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    setUrl(null);
+    setFailed(false);
+    getBrowserSupabase()
+      .storage.from("business-video")
+      .createSignedUrl(path, 3600)
+      .then(({ data, error }) => {
+        if (!alive) return;
+        if (error) setFailed(true);
+        else setUrl(data.signedUrl);
+      })
+      .catch(() => {
+        if (alive) setFailed(true);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [path]);
+  if (failed) return <p className="mt-2 text-[0.76rem] text-muted">Video bağlantısı alınamadı (yetki veya ağ hatası).</p>;
+  if (!url) return <p className="mt-2 text-[0.76rem] text-muted">Oynatıcı hazırlanıyor…</p>;
+  return <video src={url} controls preload="metadata" className="mt-2 w-full rounded-[3px] bg-black" />;
+}
+
+function AdminMedia({ businessId }: { businessId: string }) {
+  const toast = useToast();
+  const [cover, setCover] = useState<string | null>(null);
+  const [media, setMedia] = useState<AdminMediaItem[]>([]);
+  const [vids, setVids] = useState<AdminMediaVideo[]>([]);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [caption, setCaption] = useState("");
+
+  const load = useCallback(() => {
+    const sb = getBrowserSupabase();
+    void Promise.all([
+      sb.from("businesses").select("cover_image").eq("id", businessId).maybeSingle(),
+      sb.from("business_media").select("id, url, caption, sort_order").eq("business_id", businessId).order("sort_order"),
+      sb.from("video_assets").select("id, title, storage_path, scenes").eq("business_id", businessId).order("created_at", { ascending: false }),
+    ])
+      .then(([b, m, v]) => {
+        const bRow = (b.data ?? null) as Record<string, unknown> | null;
+        setCover((bRow?.cover_image as string | null) ?? null);
+        setMedia(
+          ((m.data ?? []) as Record<string, unknown>[]).map((r) => ({
+            id: String(r.id),
+            url: (r.url as string | null) ?? null,
+            caption: (r.caption as string | null) ?? null,
+          }))
+        );
+        setVids(
+          ((v.data ?? []) as Record<string, unknown>[]).map((r) => ({
+            id: String(r.id),
+            title: String(r.title ?? ""),
+            storagePath: (r.storage_path as string | null) ?? null,
+            scenes: (r.scenes as AdminMediaVideo["scenes"]) ?? [],
+          }))
+        );
+      })
+      .catch(() => undefined);
+  }, [businessId]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  /** Sunucu action'ı — sayfa YENİLENMEZ (dialog açık kalır), liste tazelenir. */
+  async function api(body: Record<string, unknown>, ok: string): Promise<boolean> {
+    const res = await fetch("/api/admin", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+    const json = await res.json().catch(() => ({ ok: false }));
+    if (json.ok) toast.push({ title: ok, tone: "positive" });
+    else toast.push({ title: json.error ?? "İşlem başarısız", tone: "danger" });
+    return Boolean(json.ok);
+  }
+
+  function checkImage(file: File): boolean {
+    if (!["image/jpeg", "image/png", "image/webp"].includes(file.type)) {
+      toast.push({ title: "Geçersiz dosya türü", desc: "Yalnızca JPG, PNG veya WebP yüklenebilir.", tone: "danger" });
+      return false;
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      toast.push({ title: "Dosya çok büyük", desc: "Görsel en fazla 5MB olabilir.", tone: "danger" });
+      return false;
+    }
+    return true;
+  }
+
+  /** Görseli PUBLIC business-media bucket'ına, İŞLETMENİN klasörüne yükler. */
+  async function uploadImage(file: File, name: string): Promise<{ path: string; url: string } | null> {
+    const sb = getBrowserSupabase();
+    const ext = file.type === "image/png" ? "png" : file.type === "image/webp" ? "webp" : "jpg";
+    const path = `${businessId}/${name}-${crypto.randomUUID()}.${ext}`;
+    const { data, error } = await sb.storage.from("business-media").upload(path, file, { contentType: file.type, upsert: false });
+    if (error) {
+      toast.push({ title: "Yükleme başarısız", desc: error.message, tone: "danger" });
+      return null;
+    }
+    const { data: pub } = sb.storage.from("business-media").getPublicUrl(data.path);
+    return { path: data.path, url: pub.publicUrl };
+  }
+
+  async function uploadCover(file: File) {
+    if (!checkImage(file)) return;
+    setBusy("cover-up");
+    try {
+      const up = await uploadImage(file, "cover");
+      if (up && (await api({ action: "business_cover", id: businessId, storagePath: up.path, url: up.url }, "Kapak güncellendi"))) load();
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function clearCover() {
+    setBusy("cover-clear");
+    try {
+      if (await api({ action: "business_cover", id: businessId, storagePath: "", url: "" }, "Kapak kaldırıldı")) load();
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function addMedia(file: File) {
+    if (!checkImage(file)) return;
+    setBusy("media-add");
+    try {
+      const up = await uploadImage(file, "kare");
+      if (up && (await api({ action: "business_media_add", business_id: businessId, storagePath: up.path, url: up.url, caption }, "Kare eklendi"))) {
+        setCaption("");
+        load();
+      }
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function delMedia(id: string) {
+    setBusy(`media-${id}`);
+    try {
+      if (await api({ action: "business_media_delete", id }, "Kare silindi")) load();
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function uploadVideo(file: File) {
+    const okTypes = ["video/mp4", "video/webm", "video/quicktime"];
+    if (!okTypes.includes(file.type)) {
+      toast.push({ title: "Geçersiz dosya türü", desc: "Yalnızca MP4, WebM veya MOV yüklenebilir.", tone: "danger" });
+      return;
+    }
+    if (file.size > 100 * 1024 * 1024) {
+      toast.push({ title: "Dosya çok büyük", desc: "Video en fazla 100MB olabilir.", tone: "danger" });
+      return;
+    }
+    setBusy("video-up");
+    try {
+      const sb = getBrowserSupabase();
+      const ext = file.name.includes(".") ? (file.name.split(".").pop() || "mp4").toLowerCase() : "mp4";
+      const path = `${businessId}/${crypto.randomUUID()}.${ext}`;
+      const { error } = await sb.storage.from("business-video").upload(path, file, { contentType: file.type, upsert: false });
+      if (error) {
+        toast.push({ title: "Yükleme başarısız", desc: error.message, tone: "danger" });
+        return;
+      }
+      if (await api({ action: "video_upload_admin", business_id: businessId, storagePath: path, title: file.name.slice(0, 120) }, "Video kütüphaneye eklendi")) load();
+    } catch {
+      toast.push({ title: "Yükleme başarısız", desc: "Ağ hatası oluştu; tekrar dene.", tone: "danger" });
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function setScene(videoId: string, idx: number, image: string | null, file?: File) {
+    setBusy(`${videoId}:${idx}`);
+    try {
+      let url = image;
+      if (file) {
+        if (!checkImage(file)) return;
+        const up = await uploadImage(file, "sahne");
+        if (!up) return;
+        url = up.url;
+      }
+      const okMsg = file ? "Sahne görseli eklendi" : image ? "Sahne görseli güncellendi" : "Sahne görseli kaldırıldı";
+      if (await api({ action: "scene_image", videoId, index: idx, image: url }, okMsg)) load();
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  const dashLabel = (busyKey: string) =>
+    `inline-flex h-9 shrink-0 items-center gap-1.5 rounded-[4px] border-2 border-dashed px-3 text-[0.8rem] font-medium ${
+      busy === busyKey ? "cursor-wait border-line text-muted" : "cursor-pointer border-line text-ink-700 hover:border-accent hover:text-accent"
+    }`;
+
+  return (
+    <div className="space-y-4">
+      {/* kapak */}
+      <div className="rounded-[4px] border border-line p-4">
+        <p className="mb-1 text-[0.72rem] font-semibold uppercase tracking-[0.14em] text-muted">Kapak görseli (banner)</p>
+        <p className="mb-3 text-[0.8rem] text-muted">İşletme sayfasının üst bandı. JPG/PNG/WebP — en fazla 5MB.</p>
+        <div className="flex flex-wrap items-start gap-4">
+          <div className="h-24 w-40 shrink-0 overflow-hidden rounded-[4px] border border-line bg-canvas">
+            {cover ? <img src={cover} alt="Kapak" className="h-full w-full object-cover" /> : (
+              <span className="flex h-full items-center justify-center text-[0.72rem] text-muted">Kapak yok</span>
+            )}
+          </div>
+          <div className="flex flex-col items-start gap-2">
+            <label className={dashLabel("cover-up")}>
+              <Icon.upload size={14} />
+              {busy === "cover-up" ? "Yükleniyor…" : "Kapak yükle"}
+              <input type="file" accept="image/jpeg,image/png,image/webp" className="sr-only" disabled={!!busy}
+                onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ""; if (f) void uploadCover(f); }} />
+            </label>
+            {cover ? (
+              <Button size="sm" variant="secondary" loading={busy === "cover-clear"} onClick={() => void clearCover()}>Kapağı kaldır</Button>
+            ) : null}
+          </div>
+        </div>
+      </div>
+
+      {/* galeri */}
+      <div className="rounded-[4px] border border-line p-4">
+        <p className="mb-1 text-[0.72rem] font-semibold uppercase tracking-[0.14em] text-muted">İşletmeden kareler (galeri)</p>
+        <p className="mb-3 text-[0.8rem] text-muted">İşletmenin kamuya açık sayfasındaki &quot;Galeri&quot; bölümü. En fazla 24 kare.</p>
+        <div className="mb-4 flex flex-wrap items-end gap-3">
+          <Field label="Altyazı (isteğe bağlı)">
+            <Input value={caption} maxLength={120} placeholder="Örn. Hafta sonu menüsü" onChange={(e) => setCaption(e.target.value)} />
+          </Field>
+          <label className={dashLabel("media-add")}>
+            <Icon.upload size={14} />
+            {busy === "media-add" ? "Yükleniyor…" : "Kare yükle"}
+            <input type="file" accept="image/jpeg,image/png,image/webp" className="sr-only" disabled={!!busy}
+              onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ""; if (f) void addMedia(f); }} />
+          </label>
+        </div>
+        {media.length ? (
+          <div className="grid grid-cols-3 gap-3 sm:grid-cols-4">
+            {media.map((mm) => (
+              <figure key={mm.id} className="relative overflow-hidden rounded-[4px] border border-line">
+                <div className="aspect-[4/3] bg-canvas">
+                  {mm.url ? <img src={mm.url} alt="" loading="lazy" className="h-full w-full object-cover" /> : null}
+                </div>
+                {mm.caption ? <figcaption className="truncate px-2 py-1 text-[0.7rem] text-muted">{mm.caption}</figcaption> : null}
+                <button type="button" aria-label="Kareyi sil" disabled={busy !== null}
+                  className="absolute right-1 top-1 flex h-6 w-6 items-center justify-center rounded-[3px] border border-line bg-surface/90 text-[0.85rem] leading-none text-danger hover:border-danger disabled:opacity-50"
+                  onClick={() => void delMedia(mm.id)}>✕</button>
+              </figure>
+            ))}
+          </div>
+        ) : (
+          <p className="text-[0.8rem] text-muted">Henüz kare yok.</p>
+        )}
+      </div>
+
+      {/* video kütüphanesi */}
+      <div className="rounded-[4px] border border-line p-4">
+        <p className="mb-1 text-[0.72rem] font-semibold uppercase tracking-[0.14em] text-muted">Video kütüphanesi</p>
+        <p className="mb-3 text-[0.8rem] text-muted">
+          Yüklenen videolar özel bucket&apos;a gider ve işletme panelinde oynatılır. MP4/WebM/MOV — en fazla 100MB.
+        </p>
+        <label className={dashLabel("video-up")}>
+          <Icon.upload size={14} />
+          {busy === "video-up" ? "Yükleniyor…" : "Video dosyası seç"}
+          <input type="file" accept="video/mp4,video/webm,video/quicktime" className="sr-only" disabled={!!busy}
+            onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ""; if (f) void uploadVideo(f); }} />
+        </label>
+        {vids.filter((v) => v.storagePath).length ? (
+          <ul className="mt-3 space-y-3">
+            {vids.filter((v) => v.storagePath).map((v) => (
+              <li key={v.id} className="rounded-[4px] border border-line-soft p-3">
+                <p className="truncate text-[0.86rem] font-semibold text-ink">{v.title}</p>
+                <p className="text-[0.74rem] text-muted">Özel bucket · DRAFT</p>
+                <AdminSignedVideo path={v.storagePath!} />
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="mt-3 text-[0.8rem] text-muted">Bu işletmeye ait yüklenmiş video yok.</p>
+        )}
+      </div>
+
+      {/* storyboard sahneleri */}
+      {vids.filter((v) => v.scenes.length).length ? (
+        <div className="rounded-[4px] border border-line p-4">
+          <p className="mb-1 text-[0.72rem] font-semibold uppercase tracking-[0.14em] text-muted">Storyboard sahne görselleri</p>
+          <p className="mb-3 text-[0.8rem] text-muted">Her sahneye görsel atanabilir; oynatıcıda &quot;Storyboard · sahne X/Y&quot; arkasında görünür.</p>
+          <div className="space-y-4">
+            {vids.filter((v) => v.scenes.length).map((v) => (
+              <div key={v.id}>
+                <p className="text-[0.86rem] font-semibold text-ink">{v.title}</p>
+                <div className="mt-2 grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  {v.scenes.slice(0, 16).map((s, i) => {
+                    const key = `${v.id}:${i}`;
+                    return (
+                      <div key={i} className="flex items-start gap-3 rounded-[4px] border border-line-soft p-2">
+                        <div className="h-14 w-20 shrink-0 overflow-hidden rounded-[3px] border border-line bg-canvas">
+                          {s.image ? <img src={s.image} alt="" loading="lazy" className="h-full w-full object-cover" /> : (
+                            <span className="flex h-full items-center justify-center text-[0.7rem] text-muted">görsel yok</span>
+                          )}
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <p className="text-[0.7rem] font-bold uppercase tracking-[0.1em] text-muted">Sahne {i + 1}/{v.scenes.length}</p>
+                          <p className="truncate text-[0.76rem] text-ink-700" title={s.visual}>{s.visual}</p>
+                          <div className="mt-1.5 flex flex-wrap gap-1.5">
+                            <label className={`inline-flex items-center gap-1 border border-line px-2 py-1 text-[0.7rem] font-medium ${busy ? "cursor-wait text-muted" : "cursor-pointer text-ink-700 hover:border-accent hover:text-accent"}`}>
+                              {busy === key ? "Yükleniyor…" : s.image ? "Değiştir" : "Görsel yükle"}
+                              <input type="file" accept="image/jpeg,image/png,image/webp" className="sr-only" disabled={busy !== null}
+                                onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ""; if (f) void setScene(v.id, i, null, f); }} />
+                            </label>
+                            {s.image ? (
+                              <button type="button" disabled={busy !== null}
+                                className="border border-line px-2 py-1 text-[0.7rem] font-medium text-danger hover:border-danger disabled:opacity-50"
+                                onClick={() => void setScene(v.id, i, null)}>Kaldır</button>
+                            ) : null}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 export default function AdminDashboard({ data, lang, currency, section, affiliate }: { data: AdminData; lang: Lang; currency: Currency; section: string; affiliate: AffiliateData }) {
   const toast = useToast();
   const [confirm, setConfirm] = useState<null | { title: string; desc: string; run: () => Promise<void> }>(null);
   const [page, setPage] = useState(1);
+  // FAZ 12D — açık medya yöneticisi (İşletmeler bölümü).
+  const [mediaBiz, setMediaBiz] = useState<null | { id: string; name: string }>(null);
   // Onay diyaloğu section değişiminde kapanır (aksi halde yeni bölümde
   // Askıdan/Geri al'ın üzerine biniyordu).
-  useEffect(() => setConfirm(null), [section]);
+  useEffect(() => { setConfirm(null); setMediaBiz(null); }, [section]);
   const c = data.counts;
 
   async function act(body: Record<string, unknown>, ok: string) {
@@ -153,12 +502,23 @@ export default function AdminDashboard({ data, lang, currency, section, affiliat
         <Td><Badge tone={b.planCode === "BOOST" ? "accent" : b.planCode === "PRO" ? "dark" : "neutral"}>{b.planCode}</Badge></Td><Td right>{b.campaigns}</Td>
         <Td>{b.suspended ? <Badge tone="danger">Askıda</Badge> : b.verified ? <Badge tone="positive">Doğrulandı</Badge> : <Badge tone="warning">Bekliyor</Badge>}</Td>
         <Td right><span className="inline-flex gap-1.5">
+          <Button size="sm" variant="ghost" icon={<Icon.upload size={13} />} onClick={() => setMediaBiz({ id: b.id, name: b.name })}>Medya</Button>
           <Button size="sm" variant="secondary" onClick={() => ask(b.verified ? "Doğrulamayı kaldır" : "İşletmeyi doğrula", `${b.name} — doğrulama durumu değişecek.`, () => act({ action: "business_verify", id: b.id, verified: !b.verified }, "Kayıt güncellendi"))}>{b.verified ? "Kaldır" : "Doğrula"}</Button>
           <Select value={b.planCode} onChange={(e) => void ask("Paket değiştir", `${b.name} → ${e.target.value}. Faturalandırma yeni pakete göre yapılır.`, () => act({ action: "business_plan", id: b.id, planCode: e.target.value }, "Paket güncellendi"))} className="h-8 py-0 text-[0.78rem]">
             {["FREE", "PRO", "BOOST", "AI28"].map((p) => <option key={p} value={p}>{p}</option>)}
           </Select>
         </span></Td></tr>))}</tbody></Table>
     <ConfirmDialog confirm={confirm} onClose={() => setConfirm(null)} />
+    {/* FAZ 12D — işletme medyası: kapak / galeri / video / storyboard sahnesi */}
+    <Dialog
+      open={!!mediaBiz}
+      onClose={() => setMediaBiz(null)}
+      width="max-w-3xl"
+      title={mediaBiz ? `${mediaBiz.name} — medya yönetimi` : "Medya yönetimi"}
+      desc="Dosyalar doğrudan Storage'a yüklenir; kayıtlar ilgili işletmenin verisine yazılır (denetim kaydı oluşur)."
+    >
+      {mediaBiz ? <AdminMedia businessId={mediaBiz.id} /> : null}
+    </Dialog>
   </Wrap>;
 
   if (section === "moderation") return <Wrap title="Kampanya moderasyonu" desc="Koşulları eksik veya yanıltıcı kampanyaları reddet; onaylananlar müşteriye görünür.">

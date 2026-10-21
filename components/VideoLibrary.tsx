@@ -10,7 +10,7 @@ export type VideoItem = {
   topic: string;
   title: string;
   durationSec: number;
-  scenes: { at: string; visual: string; caption: string }[];
+  scenes: { at: string; visual: string; caption: string; image?: string | null }[];
   captions: Record<string, string[]>;
   steps: string[];
   poster: string | null;

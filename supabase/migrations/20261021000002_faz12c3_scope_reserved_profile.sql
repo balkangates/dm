@@ -60,3 +60,11 @@ alter table public.orders
   add column if not exists reserved_at timestamptz;
 
 create index if not exists orders_reserved_idx on public.orders (business_id, reserved_at);
+
+-- 4) orders: FAZ 12C ile REZERVE delivery_type olarak eklendi; 0012'deki CHECK
+--    yalnız GEL_AL/PAKET_SERVIS'e izin verdiği için REZERVE insert'leri 500
+--    veriyordu (canlıda 21.10.2026 tespit + düzeltme).
+alter table public.orders drop constraint if exists orders_delivery_type_check;
+alter table public.orders
+  add constraint orders_delivery_type_check
+  check (delivery_type in ('GEL_AL','REZERVE','PAKET_SERVIS'));

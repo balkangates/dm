@@ -65,6 +65,25 @@ type Win = {
   speechSynthesis?: SpeechSynthesis;
 };
 
+/** FAZ 12C-3 — MOBİL ses kilidi: iOS/Android'de speechSynthesis ilk KULLANICI
+ *  DOKUNUŞU içinde bir kez açılmazsa sonraki (asenkron) speak() çağrıları sessiz
+ *  kalır. İlk pointerdown/keydown'ta sessiz bir utt. ile "açılır"; iptal eden
+ *  cancel() konuşmaları temizler. */
+let speechUnlocked = false;
+function unlockSpeech() {
+  if (speechUnlocked) return;
+  try {
+    const synth = (window as unknown as Win).speechSynthesis;
+    if (!synth) return;
+    const u = new SpeechSynthesisUtterance(" ");
+    u.volume = 0;
+    synth.speak(u);
+    speechUnlocked = true;
+  } catch {
+    /* yoksay */
+  }
+}
+
 const MicSvg = ({ size = 20 }: { size?: number }) => (
   <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
     <rect x="9" y="2" width="6" height="12" rx="3" />
@@ -147,17 +166,51 @@ export default function VoiceAssistant({
     setRecSupported(Boolean(w.SpeechRecognition || w.webkitSpeechRecognition));
   }, []);
 
+  /* MOBİL ses kilidi: ilk dokunuşta speechSynthesis açılır (bkz. unlockSpeech). */
+  useEffect(() => {
+    window.addEventListener("pointerdown", unlockSpeech, { once: true, passive: true });
+    window.addEventListener("keydown", unlockSpeech, { once: true, passive: true });
+  }, []);
+
   useEffect(() => {
     if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight;
   }, [msgs, ui]);
 
+  /** FAZ 12C-3 — mobil sağlam speak():
+   *  - iOS: cancel() sonrası AYNI tick'te speak() yutulabiliyor → kısa gecikme.
+   *  - Cihazda Türkçe ses varsa bilinçli seçilir (yoksa varsayılan sesle konuşur).
+   *  - speak() sonrası resume(): iOS kuyruğu takılırsa devam etsin. */
   const speak = useCallback((text: string) => {
     const synth = (window as unknown as Win).speechSynthesis;
     if (!synth) return;
-    synth.cancel();
-    const u = new SpeechSynthesisUtterance(text);
-    u.lang = "tr-TR";
-    synth.speak(u);
+    try {
+      synth.cancel();
+      const u = new SpeechSynthesisUtterance(text);
+      u.lang = "tr-TR";
+      try {
+        const voices = synth.getVoices();
+        const tr = voices.find((v) => (v.lang || "").toLowerCase().startsWith("tr"));
+        if (tr) u.voice = tr;
+      } catch {
+        /* ses listesi alınamazsa voice'sız devam */
+      }
+      window.setTimeout(() => {
+        try {
+          synth.speak(u);
+        } catch {
+          /* yoksay */
+        }
+        window.setTimeout(() => {
+          try {
+            synth.resume();
+          } catch {
+            /* yoksay */
+          }
+        }, 250);
+      }, 60);
+    } catch {
+      /* ses desteklenmiyorsa sessiz devam */
+    }
   }, []);
 
   const push = useCallback((who: Msg["who"], text: string) => {

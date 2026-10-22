@@ -176,6 +176,9 @@ h1, h2, h3, h4, .display {
 /* ---------------- bileşen kabukları ---------------- */
 .card {
   background: var(--color-surface);
+  /* Kart zemini açık (krem); renk ANCAK miras alınırsa (ör. koyu hero'daki
+     text-white) beyaz üstünde beyaz metin oluşur. Kart kendi mürekkebini taşır. */
+  color: var(--color-ink);
   border: 2px solid var(--color-line);
   border-radius: var(--radius-card);
   box-shadow: var(--shadow-card);

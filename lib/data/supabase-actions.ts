@@ -576,25 +576,57 @@ export async function businessAction(actor: BusinessActorLite, body: Row) {
   }
 
   if (action === "hours") {
+    // İSTEK: işletme paneli → profil → ÇALIŞMA SAATLERİ düzenlenebilir olmalı.
+    // Kaydı OLAN gün güncellenir, satırı OLMAYAN gün insert edilir (FAZ 10 ile
+    // yeni açılan işletmelerde business_hours tohumu yoktur). Yetki rotada
+    // (profile.write) + RLS'te: yalnızca kendi işletmesinin satırları yazılır.
     const rows = Array.isArray(body.hours) ? body.hours : [];
+    if (!rows.length) throw new ActionError(400, "Güncellenecek gün bulunamadı.");
+    const timeOk = (v: unknown) => (/^([01][0-9]|2[0-3]):[0-5][0-9]$/.test(String(v ?? "")) ? String(v) : null);
+
+    const { data: existing, error: exErr } = await client
+      .from("business_hours")
+      .select("id, day_of_week")
+      .eq("business_id", actor.businessId);
+    if (exErr) fail(exErr);
+    const idByDay = new Map<number, string>();
+    for (const r of (existing ?? []) as Row[]) idByDay.set(Number(r.day_of_week), String(r.id ?? ""));
+
+    let updated = 0;
+    let inserted = 0;
     for (const h of rows.slice(0, 7)) {
       const r = h as Row;
-      const id = String(r.id ?? "");
-      if (!id) continue;
-      const timeOk = (v: unknown) => (/^\d{2}:\d{2}$/.test(String(v ?? "")) ? String(v) : null);
-      // RLS: yalnızca kendi işletmesinin satırları güncellenir (çapraz yazım engeli).
-      await client
-        .from("business_hours")
-        .update({
-          opens_at: timeOk(r.opensAt) ?? "09:00",
-          closes_at: timeOk(r.closesAt) ?? "22:00",
-          closed: r.closed === true,
-        })
-        .eq("id", id)
-        .eq("business_id", actor.businessId);
+      const day = Number(r.dayOfWeek);
+      if (!Number.isInteger(day) || day < 0 || day > 6) continue;
+      const payload = {
+        opens_at: timeOk(r.opensAt) ?? "09:00",
+        closes_at: timeOk(r.closesAt) ?? "22:00",
+        closed: r.closed === true,
+      };
+      const id = String(r.id ?? "") || (idByDay.get(day) ?? "");
+      if (id) {
+        const { error } = await client
+          .from("business_hours")
+          .update(payload)
+          .eq("id", id)
+          .eq("business_id", actor.businessId);
+        if (error) fail(error);
+        updated += 1;
+      } else {
+        const { error } = await client
+          .from("business_hours")
+          .insert({ ...payload, business_id: actor.businessId, day_of_week: day });
+        if (error) fail(error);
+        idByDay.set(day, "");
+        inserted += 1;
+      }
     }
-    await logAudit(actor.email, actor.staffRole, "BUSINESS_HOURS_UPDATED", "businesses", actor.businessId, {});
-    return Response.json({ ok: true });
+    if (!updated && !inserted) throw new ActionError(400, "Geçerli gün bulunamadı (dayOfWeek 0-6).");
+    await logAudit(actor.email, actor.staffRole, "BUSINESS_HOURS_UPDATED", "businesses", actor.businessId, {
+      updated,
+      inserted,
+    });
+    return Response.json({ ok: true, updated, inserted });
   }
 
   if (action === "content_decision") {

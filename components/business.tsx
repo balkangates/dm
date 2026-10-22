@@ -8,7 +8,7 @@ import {
 import { DashSectionHead, StatusBadge, type NavItem } from "@/components/Dash";
 import { makeT } from "@/lib/i18n";
 import { CAMPAIGN_TEMPLATES, applyCampaignTemplate, type CampaignTemplate } from "@/lib/campaignTemplates";
-import { daysUntil, money, num, pct, relative, shortDate, type Currency, type Lang } from "@/lib/money";
+import { DAY_NAMES, daysUntil, money, num, pct, relative, shortDate, type Currency, type Lang } from "@/lib/money";
 import type { getBusinessData } from "@/lib/queries";
 import { getBrowserSupabase } from "@/lib/supabase/client";
 
@@ -67,6 +67,13 @@ type ProfileForm = Record<ProfileFieldKey, string>;
 function profileMissingOf(vals: ProfileForm | Record<string, unknown>): string[] {
   return PROFILE_REQUIRED.filter((r) => String((vals as Record<string, unknown>)[r.key] ?? "").trim().length < 2).map((r) => r.label);
 }
+
+/* İSTEK: işletme profilinde ÇALIŞMA SAATLERİ düzenlenebilir olmalı.
+ * Satır 0 = Pazar … 6 = Cumartesi (business_hours.day_of_week ile aynı sıra);
+ * saatler DB CHECK'iyle 'HH:MM' biçiminde saklanır — istemcide de aynı doğrulama. */
+type HourEdit = { id: string; dayOfWeek: number; opensAt: string; closesAt: string; closed: boolean };
+const HOUR_TIME_RE = /^([01][0-9]|2[0-3]):[0-5][0-9]$/;
+const timeOr = (v: string, fallback: string) => (HOUR_TIME_RE.test(v) ? v : fallback);
 
 export type StudioVideo = {
   id: string; topic: string; title: string; durationSec: number;
@@ -396,6 +403,38 @@ function ProfileSection({ d, onPost, lang }: { d: BD; onPost: (r: string, b: Rec
   const [mediaBusy, setMediaBusy] = useState<string | null>(null);
   const [galleryCaption, setGalleryCaption] = useState("");
 
+  /* ---------- Çalışma saatleri (düzenlenebilir) ----------
+   * 7 günün tamamı her zaman listede durur; kayıt edilmemiş gün DB'de yoksa
+   * sunucu günü insert eder, varsa günceller (bkz. supabase-actions "hours"). */
+  const [hours, setHours] = useState<HourEdit[]>(() =>
+    Array.from({ length: 7 }, (_, day) => {
+      const h = d.hours.find((x) => x.dayOfWeek === day);
+      return { id: h?.id ?? "", dayOfWeek: day, opensAt: h?.opensAt || "09:00", closesAt: h?.closesAt || "22:00", closed: !!h?.closed };
+    }),
+  );
+  const [hoursBusy, setHoursBusy] = useState(false);
+  const today = new Date().getDay(); // 0 = Pazar … 6 = Cumartesi (business_hours.day_of_week ile aynı)
+
+  function patchHour(day: number, patch: Partial<HourEdit>) {
+    setHours((prev) => prev.map((h) => (h.dayOfWeek === day ? { ...h, ...patch } : h)));
+  }
+
+  async function saveHours() {
+    const payload = hours.map((h) => ({
+      id: h.id || undefined,
+      dayOfWeek: h.dayOfWeek,
+      opensAt: timeOr(h.opensAt, "09:00"),
+      closesAt: timeOr(h.closesAt, "22:00"),
+      closed: h.closed,
+    }));
+    setHoursBusy(true);
+    try {
+      await onPost("/api/business", { action: "hours", hours: payload }, "Çalışma saatleri güncellendi");
+    } finally {
+      setHoursBusy(false);
+    }
+  }
+
   function checkImage(file: File): boolean {
     if (!["image/jpeg", "image/png", "image/webp"].includes(file.type)) {
       toast.push({ title: "Geçersiz dosya türü", desc: "Yalnızca JPG, PNG veya WebP yüklenebilir.", tone: "danger" });
@@ -602,10 +641,61 @@ function ProfileSection({ d, onPost, lang }: { d: BD; onPost: (r: string, b: Rec
         </Card>
       </div>
 
-      <div className="mt-6"><Card><p className="mb-3 text-[0.72rem] font-semibold uppercase tracking-[0.14em] text-muted">Çalışma saatleri</p>
-        <ul className="space-y-2">{d.hours.map((h) => (<li key={h.id} className="flex items-center justify-between border-b border-line-soft pb-2 text-[0.85rem] last:border-0">
-          <span className="text-ink-700">{["Pazar", "Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma", "Cumartesi"][h.dayOfWeek]}</span>
-          <span className="tabular font-medium">{h.closed ? "Kapalı" : `${h.opensAt} – ${h.closesAt}`}</span></li>))}</ul></Card></div>
+      {/* Çalışma saatleri — panelde düzenlenebilir (kamuya açık sayfada da yayınlanır) */}
+      <div className="mt-6">
+        <Card>
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div className="min-w-0">
+              <p className="text-[0.72rem] font-semibold uppercase tracking-[0.14em] text-muted">Çalışma saatleri</p>
+              <p className="mt-1.5 max-w-[72ch] text-[0.82rem] leading-relaxed text-muted">
+                Her gün için açılış ve kapanış saatini düzenleyebilirsin. &quot;Kapalı&quot; işaretlenen gün kamuya açık
+                işletme sayfanda &quot;Kapalı&quot; olarak görünür; o günün saatleri yine de saklanır.
+              </p>
+            </div>
+            <Button size="sm" loading={hoursBusy} icon={<Icon.check size={14} />} onClick={() => void saveHours()}>
+              Çalışma saatlerini kaydet
+            </Button>
+          </div>
+
+          <ul className="mt-4 space-y-2.5">
+            {hours.map((h) => (
+              <li key={h.dayOfWeek} className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-line-soft pb-2.5 last:border-0 last:pb-0">
+                <span className={`w-[104px] shrink-0 text-[0.85rem] leading-tight ${h.dayOfWeek === today ? "font-bold text-accent" : "font-medium text-ink-700"}`}>
+                  {DAY_NAMES.tr[h.dayOfWeek]}
+                  {h.dayOfWeek === today ? <span className="block text-[0.6rem] font-semibold uppercase tracking-[0.12em] text-muted">bugün</span> : null}
+                </span>
+                <span className="flex items-center gap-1.5">
+                  <span className="text-[0.74rem] text-muted">Açılış</span>
+                  <Input
+                    type="time"
+                    className="tabular w-[6.75rem] px-2 text-[0.85rem]"
+                    value={h.opensAt}
+                    disabled={h.closed}
+                    aria-label={`${DAY_NAMES.tr[h.dayOfWeek]} açılış saati`}
+                    onChange={(e) => patchHour(h.dayOfWeek, { opensAt: e.target.value })}
+                  />
+                </span>
+                <span className="text-muted">–</span>
+                <span className="flex items-center gap-1.5">
+                  <span className="text-[0.74rem] text-muted">Kapanış</span>
+                  <Input
+                    type="time"
+                    className="tabular w-[6.75rem] px-2 text-[0.85rem]"
+                    value={h.closesAt}
+                    disabled={h.closed}
+                    aria-label={`${DAY_NAMES.tr[h.dayOfWeek]} kapanış saati`}
+                    onChange={(e) => patchHour(h.dayOfWeek, { closesAt: e.target.value })}
+                  />
+                </span>
+                <span className="ml-auto flex items-center gap-3">
+                  <span className="tabular text-[0.78rem] font-medium text-muted">{h.closed ? "Kapalı" : "Açık"}</span>
+                  <Checkbox checked={h.closed} label="Kapalı" onChange={(v) => patchHour(h.dayOfWeek, { closed: v })} />
+                </span>
+              </li>
+            ))}
+          </ul>
+        </Card>
+      </div>
     </div>
   );
 }

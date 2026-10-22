@@ -120,7 +120,9 @@ export default async function HomePage() {
               ))}
               <div className="card absolute bottom-0 right-0 w-[240px] p-4" style={{ transform: "rotate(1.6deg)" }}>
                 <p className="text-[0.68rem] font-semibold uppercase tracking-[0.14em] text-muted">QR ile mağazada</p>
-                <p className="mt-1.5 font-display text-[1rem] font-bold leading-snug">Okut, koşulları gör, indirimi işletme uygulasın.</p>
+                {/* Kart krem (--color-surface) zeminli; hero'daki text-white mirası kırılmazsa
+                    metin beyaz üstünde beyaz kalır ve okunmaz — açık zeminde daima ink. */}
+                <p className="mt-1.5 font-display text-[1rem] font-bold leading-snug text-ink">Okut, koşulları gör, indirimi işletme uygulasın.</p>
                 <Link href="/qr" className="mt-3 inline-flex items-center gap-1.5 text-[0.8rem] font-semibold text-accent">QR deneyimi <Icon.arrowRight size={14} /></Link>
               </div>
             </div>

@@ -302,14 +302,11 @@ export function createTts(host: TtsHost | undefined, events: TtsEvents = {}) {
     const attempt = ++s.attempt;
     const stale = () => s.finished || s.gen !== gen || s.attempt !== attempt;
     const tr = s.fallback ? undefined : pickTurkishVoice(voices);
-    let fallbackVoice: SpeechSynthesisVoice | undefined;
     if (!tr && !s.fallback) {
-      if (!voices.length) {
-        ttsLog(H, "no_voices", "getVoices() boş — varsayılan motor sesi, lang=tr-TR", true);
-      } else {
-        fallbackVoice = voices.find((v) => v.default) || voices[0];
-        ttsLog(H, "no_turkish_voice", `Türkçe ses yok; varsayılan: ${fallbackVoice?.name} (${fallbackVoice?.lang})`, true);
-      }
+      // Türkçe ses listede görünmese bile lang=tr-TR istenir: Android/iOS motoru kendi Türkçe sesini
+      // seçebilir. İngilizce varsayılan sese YALNIZ motor tr-TR'yi reddederse düşülür (aşağıda).
+      if (!voices.length) ttsLog(H, "no_voices", "getVoices() boş — lang=tr-TR ile motorun kendi sesi", true);
+      else ttsLog(H, "no_turkish_voice", `listede Türkçe ses yok (${voices.length} ses); lang=tr-TR isteniyor, motor reddederse varsayılan ses`, true);
     }
 
     let utterances: SpeechSynthesisUtterance[];
@@ -324,9 +321,6 @@ export function createTts(host: TtsHost | undefined, events: TtsEvents = {}) {
         } else if (tr) {
           u.voice = tr;
           u.lang = LANG;
-        } else if (fallbackVoice) {
-          u.voice = fallbackVoice;
-          u.lang = fallbackVoice.lang || LANG;
         } else {
           u.lang = LANG;
         }

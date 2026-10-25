@@ -13,6 +13,8 @@ import { slugify } from "@/lib/money";
 import { getSessionUser, type BusinessActorLite, type SessionUserLite } from "@/lib/authz";
 import { generateAdVariants, generateSocial, generateStory, generateVideoScript, type BusinessSnapshot } from "@/lib/ai";
 import { growthAlternative, growthTaskTemplate, type ExistingRec, type GrowthExtras, type GrowthPlan } from "@/lib/growth";
+import { validateCampaignPayload } from "@/lib/campaignRules";
+import { geminiDiagnostics } from "@/lib/aiGemini";
 
 type Row = Record<string, unknown>;
 
@@ -347,6 +349,39 @@ async function requireCompleteProfile(client: Awaited<ReturnType<typeof sb>>, bu
   return required.filter(([v]) => String(v ?? "").trim().length < 2).map(([, label]) => label);
 }
 
+/** FAZ 1 — ÇİFT KAYIT (aynı başlık + çakışan tarih aralığı) araması.
+ *  Yalnızca kendi işletmesinin kampanyaları arasında aranır (RLS + business_id). */
+const normCampaignTitle = (s: string) => s.replace(/\s+/g, " ").trim().toLocaleLowerCase("tr-TR");
+
+async function findDuplicateCampaign(
+  client: Awaited<ReturnType<typeof sb>>,
+  businessId: string,
+  title: string,
+  startsAt: Date,
+  endsAt: Date | null,
+): Promise<Row | null> {
+  const { data } = await client
+    .from("campaigns")
+    .select("id, code, title, starts_at, ends_at, status")
+    .eq("business_id", businessId)
+    .order("created_at", { ascending: false })
+    .limit(200);
+  const wanted = normCampaignTitle(title);
+  if (!wanted) return null;
+  const aStart = startsAt.getTime();
+  const aEnd = endsAt && !Number.isNaN(endsAt.getTime()) ? endsAt.getTime() : Infinity;
+  for (const r of (data ?? []) as Row[]) {
+    if (String(r.status ?? "") === "ENDED") continue; // süresi dolanlar engel oluşturmaz
+    if (normCampaignTitle(String(r.title ?? "")) !== wanted) continue;
+    const bStart = new Date(String(r.starts_at ?? "")).getTime();
+    const bEnd = r.ends_at ? new Date(String(r.ends_at)).getTime() : Infinity;
+    if (Number.isNaN(bStart)) continue;
+    // tarih aralıkları kesişiyor mu (bitişsiz = açık uçlu)
+    if (aStart <= bEnd && bStart <= aEnd) return r;
+  }
+  return null;
+}
+
 export async function campaignUpsert(actor: BusinessActorLite, body: Row) {
   const client = await sb();
   const action = String(body.action ?? "create");
@@ -378,28 +413,32 @@ export async function campaignUpsert(actor: BusinessActorLite, body: Row) {
     return Response.json({ ok: true, campaign: cam(updated as Row) });
   }
 
-  // create / update — doğrulama eski rotayla birebir
-  const title = String(body.title ?? "").trim();
-  const errors: Record<string, string> = {};
-  if (title.length < 5) errors.title = "Başlık en az 5 karakter olmalı.";
+  // FAZ 1 — DOĞRULAMA TEK KAYNAKTAN: manuel form, AI taslağı ve bu kayıt servisi
+  // lib/campaignRules.ts içindeki validateCampaignPayload'ı paylaşır (aynı mesajlar).
+  const id = body.id ? String(body.id) : null;
+  let existing: Row | null = null;
+  if (id) {
+    const { data: ex } = await client.from("campaigns").select("*").eq("id", id).maybeSingle();
+    if (!ex) throw new ActionError(404, "Kampanya bulunamadı.");
+    if (str(ex.business_id) !== actor.businessId) throw new ActionError(403, "Bu kampanya size ait değil.");
+    existing = ex as Row;
+  }
 
+  const errors = validateCampaignPayload(body, {
+    existingImageUrl: existing ? String(existing.image_url ?? "") : null,
+  });
+  if (Object.keys(errors).length) return Response.json({ ok: false, errors }, { status: 422 });
+
+  // Normalize/klasörleme — doğrulamadan geçmiş veriyle çalışır (eskisiyle aynı).
+  const title = String(body.title ?? "").trim();
   const type = String(body.type ?? "PERCENT");
   const discountPercent = clamp(body.discountPercent, 0, 70);
   const discountAmountCents = clamp(body.discountAmountCents, 0, 5_000_000);
-  if (type === "PERCENT" && discountPercent <= 0) errors.discountPercent = "Yüzde 0'dan büyük olmalı.";
-  if ((type === "FIXED" || type === "PRODUCT") && discountAmountCents <= 0)
-    errors.discountAmountCents = "Sabit indirim tutarı 0'dan büyük olmalı.";
-
   const description = String(body.description ?? "").trim();
-  if (description.length < 10) errors.description = "Açıklama en az 10 karakter olmalı.";
   const terms = String(body.terms ?? "").trim();
-  if (terms.length < 20) errors.terms = "Kampanya koşulları en az 20 karakter olmalı (müşteriye gösterilir).";
 
   const startsAt = body.startsAt ? new Date(String(body.startsAt)) : new Date();
   const endsAt = body.endsAt ? new Date(String(body.endsAt)) : null;
-  if (Number.isNaN(startsAt.getTime())) errors.startsAt = "Geçersiz başlangıç tarihi.";
-  if (endsAt && Number.isNaN(endsAt.getTime())) errors.endsAt = "Geçersiz bitiş tarihi.";
-  if (endsAt && endsAt <= startsAt) errors.endsAt = "Bitiş tarihi başlangıçtan sonra olmalı.";
 
   const minBasketCents = clamp(body.minBasketCents, 0, 10_000_000);
   const currency = ["TRY", "USD", "GEL", "EUR"].includes(String(body.currency)) ? String(body.currency) : "TRY";
@@ -411,15 +450,10 @@ export async function campaignUpsert(actor: BusinessActorLite, body: Row) {
     ? body.serviceModes.map(String) // FAZ 12C-3 — yeni çoklu seçim
     : [String(body.serviceMode ?? "")]; // eski tekli alanla geriye uyum
   const serviceModes = [...new Set(rawModes.flatMap((v) => (v === "ALL" ? ORDER_MODES : ORDER_MODES.includes(v) ? [v] : [])))];
-  if (!serviceModes.length)
-    errors.serviceModes = "Kapsam seç: gel-al, rezerve ve/veya paket servis (en az biri işaretli olmalı).";
   const paymentScope = [...new Set(
     (Array.isArray(body.paymentScope) && body.paymentScope.length ? body.paymentScope.map(String) : ["CASH_DOOR", "CARD_DOOR"])
       .filter((v: string) => v === "CASH_DOOR" || v === "CARD_DOOR"),
   )];
-  if (!paymentScope.length)
-    errors.paymentScope = "Ödeme kapsamı seç: kapıda/iş yerinde nakit ve/veya kart (en az biri).";
-  if (Object.keys(errors).length) return Response.json({ ok: false, errors }, { status: 422 });
   // Eski tekli kolon geriye uyumluluk için: üçü → ALL, tek → o, karma → ALL
   // (yeni tüm okuyucular service_modes / payment_scope alanlarını kullanır).
   const legacyServiceMode = serviceModes.length === 3 || serviceModes.length === 2 ? "ALL" : serviceModes[0];
@@ -453,14 +487,7 @@ export async function campaignUpsert(actor: BusinessActorLite, body: Row) {
     is_sponsored: false,
   };
 
-  const id = body.id ? String(body.id) : null;
-  let existing: Row | null = null;
-  if (id) {
-    const { data: ex } = await client.from("campaigns").select("*").eq("id", id).maybeSingle();
-    if (!ex) throw new ActionError(404, "Kampanya bulunamadı.");
-    if (str(ex.business_id) !== actor.businessId) throw new ActionError(403, "Bu kampanya size ait değil.");
-    existing = ex as Row;
-  }
+  // (id / existing daha doğrulamanın hemen başında çözüldü — FAZ 1 sıralaması.)
 
   // İSTEK (d): görsel olmadan yayınlama YOK (istekte yeni görsel yoksa mevcut görsel korunur).
   const effectiveImage =
@@ -487,6 +514,18 @@ export async function campaignUpsert(actor: BusinessActorLite, body: Row) {
     if (error) fail(error);
     await logAudit(actor.email, actor.staffRole, "CAMPAIGN_UPDATED", "campaigns", id, { title });
     return Response.json({ ok: true, campaign: cam(updated as Row) });
+  }
+
+  // FAZ 1 — ÇİFT KAYIT ENGELİ: aynı başlık + çakışan tarih aralığı zaten varsa
+  // yeni satır açılmaz (çift tıklama / iki kez gönderim / AI tekrarı). id'li
+  // düzenlemeler bundan muaftır; ENDED (süresi dolan) kayıtlar sayılmaz.
+  if (!id) {
+    const dup = await findDuplicateCampaign(client, actor.businessId, title, startsAt, endsAt);
+    if (dup)
+      throw new ActionError(
+        409,
+        `Bu başlık ve tarih aralığında kampanya zaten var (${String(dup.code)}). Yeni kayıt açmak yerine mevcut kampanyayı düzenleyin ya da başlığı/tarihleri değiştirin.`,
+      );
   }
 
   const code = `DMP-${Math.random().toString(36).slice(2, 7).toUpperCase()}`;
@@ -884,6 +923,10 @@ export async function businessAction(actor: BusinessActorLite, body: Row) {
           ? Number(body.kdvRate)
           : null;
     if (name.length < 2) throw new ActionError(422, "Ürün adı en az 2 karakter olmalı.");
+    // FAZ 4 (onaylı): fiyat BOŞ GEÇİLEMEZ — AI taslakları fiyatı bilerek doldurmaz,
+    // onay sırasında kullanıcı girer. 0 da girilmelidir (ücretsiz ürün tanımlanamaz).
+    if (!Number.isFinite(Number(body.priceCents)) || Number(body.priceCents) <= 0)
+      throw new ActionError(422, "Ürün fiyatı girilmelidir (0 olamaz); onay sırasında fiyatı doldurun.");
     const payload: Row = {
       name,
       description,
@@ -925,6 +968,11 @@ export async function businessAction(actor: BusinessActorLite, body: Row) {
   }
 
   if (action === "ad_request") {
+    // FAZ 4 (onaylı): bütçe BOŞ GEÇİLEMEZ — AI brief'i bütçe bilerek doldurmaz,
+    // onay sırasında kullanıcı girer. Reklam 0 bütçeyle anlamsız olduğundan >0 şart.
+    const budgetRaw = body.budgetCents;
+    if (budgetRaw === undefined || budgetRaw === null || String(budgetRaw).trim() === "" || !Number.isFinite(Number(budgetRaw)) || Number(budgetRaw) <= 0)
+      throw new ActionError(422, "Reklam bütçesi girilmelidir (0 olamaz); talebi göndermeden önce bütçeyi doldurun.");
     const { data: row, error } = await client
       .from("ad_campaigns")
       .insert({
@@ -1680,10 +1728,14 @@ export async function aiSettingsOverview() {
   const client = await sb();
   const { data, error } = await client.from("ai_settings").select("*");
   const rows = error ? [] : ((data ?? []) as Row[]);
+  // FAZ 3 — sağlayıcı tanılama: yalnızca ortam değişkeninin VARLIĞI/ADI döner,
+  // API anahtarı asla gövdeye yazılmaz (erişilebilirlik doğrulaması için).
+  const gemini = geminiDiagnostics();
   return Response.json({
     ok: true,
-    provider: "local-template-engine",
-    model: "dampingvar-marketing-v1",
+    provider: gemini.configured ? "google-gemini (+local-template-engine fallback)" : "local-template-engine",
+    model: gemini.configured ? gemini.model : "dampingvar-marketing-v1",
+    gemini,
     socialPublishing: "NOT_CONNECTED",
     videoGeneration: "NOT_CONNECTED",
     note: "Sağlayıcı anahtarları yalnızca sunucu tarafında okunur; tarayıcıya gönderilmez.",

@@ -803,6 +803,9 @@ export async function getBusinessData(businessId: string, days = 14) {
       cta: nul(c.cta),
       variant: nul(c.variant),
       status: str(c.status),
+      // FAZ 5 — panelde ilişki rozeti/görsel üretim durumu için mevcut jsonb alan
+      // (YENİ kolon açılmadı): campaignId/adTitle/generationStatus/visualPrompt.
+      meta: (c.meta ?? {}) as Record<string, unknown>,
       createdAt: iso(c.created_at),
     })),
     plan: planRow

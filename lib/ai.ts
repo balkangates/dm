@@ -12,6 +12,8 @@ export type SectorKey = "restoran" | "market" | "magaza" | "hizmet" | "yapi";
 export type SnapshotProduct = { name: string; priceCents: number; discountPriceCents?: number | null };
 export type SnapshotService = { name: string; priceCents: number };
 export type SnapshotCampaign = {
+  /** FAZ 5 — içerik ↔ kampanya ilişkilendirmesi için kimlik (mevcut veri; yeni kolon yok). */
+  id?: string;
   title: string;
   type: string;
   discountPercent: number;
@@ -499,6 +501,50 @@ export function generateVideoScript(snap: BusinessSnapshot, focus?: string): Vid
       { time: "11–15 sn", visual: `QR ekranda, kasa görüntüsü`, voiceover: `Kasada QR'ını göster, avantajı anında al.` },
     ],
     cta: "Alışveriş yapmadan önce DampingVar'a bak.",
+  };
+}
+
+/* ------------------------------------------------------------------ *
+ * FAZ 5 — İÇERİK BRIEF'İ (mevcut veriden hazır alanlar)
+ * ------------------------------------------------------------------ */
+
+/**
+ * İçerik brief'i: işletme türü + ürünler + kampanya verisinden yazılacak içeriğin
+ * iskeletini üretir (hedef, kitle, mesaj kaynakları, format, CTA, hashtag, kontrol).
+ * Yalnız TASLAK döner; yayın/ücret/reklam harcaması yapmaz.
+ */
+export function generateContentBrief(snap: BusinessSnapshot, goal: string): GeneratedContent {
+  const ctas = SECTOR_CTA[snap.sectorKey] ?? SECTOR_CTA.magaza;
+  const tags = hashtagLine(snap);
+  const products = snap.products.slice(0, 3).map((p) => p.name);
+  const campaign = snap.campaigns[0];
+  const cta = ctas[0] ?? "DampingVar'a göz at.";
+  const campaignLine = campaign
+    ? `${campaign.title} — ${
+        campaign.discountPercent > 0
+          ? `%${campaign.discountPercent} indirim`
+          : campaign.discountAmountCents > 0
+            ? `${Math.round(campaign.discountAmountCents / 100).toLocaleString("tr-TR")} TL indirim`
+            : campaign.type
+      }`
+    : "Aktif kampanya yok — kategori ve yer vurgusu önerilir.";
+  return {
+    kind: "BRIEF",
+    platform: "Çoklu platform",
+    title: `İçerik brief'i — ${snap.name}`,
+    body: [
+      `HEDEF: ${goal}`,
+      ``,
+      `1) KİTLE: ${snap.district}, ${snap.city} çevresinde ${SECTOR_LABEL[snap.sectorKey]} arayan yerel müşteriler (puan ${snap.rating}/5, ${snap.reviewCount} değerlendirme).`,
+      `2) MESAJ KAYNAKLARI: ${products.join(", ") || SECTOR_PRODUCT_HINT[snap.sectorKey]}.${snap.description ? ` Profil notu: ${snap.description}` : ""}`,
+      `3) KAMPANYA BAĞI: ${campaignLine}`,
+      `4) FORMAT ÖNERİSİ: 1 kısa gönderi + 1 story (3 kare) + 1 yerel reklam metni.`,
+      `5) CTA: ${cta}`,
+      `6) HASHTAG: ${tags}`,
+      `7) KONTROL: görsel/marka izni, marka adı doğruluğu, platform metin uzunluğu, indirim iddiasının kampanya koşullarıyla uyumu.`,
+    ].join("\n"),
+    cta,
+    meta: { goal, sectors: snap.sectorKey, campaignBound: Boolean(campaign) },
   };
 }
 

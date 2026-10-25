@@ -27,6 +27,7 @@ import {
   type VoiceCampaign, type VoiceCtx, type VoiceMode, type VoicePayment, type VoiceProduct, type VoiceState, type VoiceUi,
 } from "@/lib/voice";
 import { breakdownLines } from "@/lib/order-price";
+import { createTts, ttsLog, type SpeakResult, type Tts, type TtsHost } from "@/lib/tts";
 
 type Msg = { who: "ai" | "me"; text: string };
 
@@ -54,34 +55,25 @@ type Rec = {
   maxAlternatives: number;
   onresult: ((e: { results: ArrayLike<ArrayLike<{ transcript: string }>> }) => void) | null;
   onend: (() => void) | null;
-  onerror: (() => void) | null;
+  onerror: ((e: { error?: string }) => void) | null;
   start: () => void;
   stop: () => void;
+  abort?: () => void;
 };
 
 type Win = {
   SpeechRecognition?: new () => Rec;
   webkitSpeechRecognition?: new () => Rec;
-  speechSynthesis?: SpeechSynthesis;
 };
 
-/** FAZ 12C-3 — MOBİL ses kilidi: iOS/Android'de speechSynthesis ilk KULLANICI
- *  DOKUNUŞU içinde bir kez açılmazsa sonraki (asenkron) speak() çağrıları sessiz
- *  kalır. İlk pointerdown/keydown'ta sessiz bir utt. ile "açılır"; iptal eden
- *  cancel() konuşmaları temizler. */
-let speechUnlocked = false;
-function unlockSpeech() {
-  if (speechUnlocked) return;
-  try {
-    const synth = (window as unknown as Win).speechSynthesis;
-    if (!synth) return;
-    const u = new SpeechSynthesisUtterance(" ");
-    u.volume = 0;
-    synth.speak(u);
-    speechUnlocked = true;
-  } catch {
-    /* yoksay */
-  }
+/** FAZ 12C-4 — konuşma sonrası mikrofon otomatik yeniden açılırken sınırlar. */
+const RELISTEN_DELAY_MS = 450; // hoparlör kuyruğu/yankı sönsün
+const MAX_HANDSFREE_TURNS = 6; // üst üste otomatik tur sınırı (sonsuz döngü koruması)
+const MIC_CLOSE_TIMEOUT_MS = 800; // tanıma onend'i gelmezse konuşmayı yine de başlat
+
+/** Yankı koruması için: küçük harf + noktalama temizliği (Türkçe). */
+function norm(t: string): string {
+  return t.toLocaleLowerCase("tr-TR").replace(/[^a-z0-9çğıöşü ]+/g, " ").replace(/\s+/g, " ").trim();
 }
 
 const MicSvg = ({ size = 20 }: { size?: number }) => (
@@ -123,6 +115,10 @@ export default function VoiceAssistant({
   const [listening, setListening] = useState(false);
   const [input, setInput] = useState("");
   const [recSupported, setRecSupported] = useState(false);
+  /** FAZ 12C-4 — TTS durumu: null = henüz bilinmiyor (SSR). */
+  const [ttsSupported, setTtsSupported] = useState<boolean | null>(null);
+  const [speaking, setSpeaking] = useState(false);
+  const [ttsBlocked, setTtsBlocked] = useState(false);
   const [sending, setSending] = useState(false);
   const [orderId, setOrderId] = useState<string | null>(null);
   const [lastBreakdown, setLastBreakdown] = useState<ReturnType<typeof cartBreakdown> | null>(null);
@@ -158,6 +154,18 @@ export default function VoiceAssistant({
   const recRef = useRef<Rec | null>(null);
   const logRef = useRef<HTMLDivElement>(null);
   const greetedRef = useRef(false);
+  const ttsRef = useRef<Tts | null>(null);
+  const recActiveRef = useRef(false);
+  const recEndWaitersRef = useRef<Array<() => void>>([]);
+  /** Kullanıcı mikrofonla konuştuysa true: asistan bitince mikrofon kontrollü yeniden açılır. */
+  const handsfreeRef = useRef(false);
+  const handsfreeTurnsRef = useRef(0);
+  const relistenTimerRef = useRef<number | null>(null);
+  const speakSeqRef = useRef(0);
+  const lastAiRef = useRef("");
+  const lastSpeechEndRef = useRef(0);
+  const openRef = useRef(false);
+  openRef.current = open;
 
   const modeList = enabledModes(ctx);
 
@@ -166,61 +174,156 @@ export default function VoiceAssistant({
     setRecSupported(Boolean(w.SpeechRecognition || w.webkitSpeechRecognition));
   }, []);
 
-  /* MOBİL ses kilidi: ilk dokunuşta speechSynthesis açılır (bkz. unlockSpeech). */
+  /* FAZ 12C-4 — TTS denetleyicisi (lib/tts.ts): mobil ses kilidi, voiceschanged,
+   * parçalı konuşma, hata kaydı ve konuşma başladı/bitti olayları burada bağlanır. */
   useEffect(() => {
-    window.addEventListener("pointerdown", unlockSpeech, { once: true, passive: true });
-    window.addEventListener("keydown", unlockSpeech, { once: true, passive: true });
+    const t = createTts(window as unknown as TtsHost, {
+      onSpeakingChange: setSpeaking,
+      onBlocked: () => setTtsBlocked(true),
+    });
+    ttsRef.current = t;
+    setTtsSupported(t.supported);
+    return () => {
+      t.destroy();
+      ttsRef.current = null;
+    };
   }, []);
+
+  const clearRelisten = useCallback(() => {
+    if (relistenTimerRef.current != null) {
+      window.clearTimeout(relistenTimerRef.current);
+      relistenTimerRef.current = null;
+    }
+  }, []);
+
+  /** Tanıma açıksa durdurur; onend gelince (veya zaman aşımında) çözülür. Açık değilse null → konuşma EŞZAMANLI başlar
+   *  (iOS'ta ilk konuşma dokunuş bağlamında kalmalı). */
+  const closeMic = useCallback((): Promise<void> | null => {
+    if (!recActiveRef.current) return null;
+    return new Promise<void>((resolve) => {
+      let done = false;
+      const fin = () => {
+        if (done) return;
+        done = true;
+        resolve();
+      };
+      recEndWaitersRef.current.push(fin);
+      window.setTimeout(() => {
+        if (!done) ttsLog(window as unknown as TtsHost, "engine_init", "mikrofon onend gelmedi; konuşma yine de başlatılıyor");
+        fin();
+      }, MIC_CLOSE_TIMEOUT_MS);
+      try {
+        recRef.current?.stop();
+      } catch {
+        /* yoksay */
+      }
+    });
+  }, []);
+
+  /** Mikrofonu hemen bırak (kullanıcı kapattı / arka plan / panel kapandı). */
+  const killMic = useCallback(() => {
+    handsfreeRef.current = false;
+    clearRelisten();
+    const r = recRef.current;
+    if (r) {
+      try {
+        (r.abort ?? r.stop).call(r);
+      } catch {
+        /* yoksay */
+      }
+    }
+  }, [clearRelisten]);
+
+  const startListeningRef = useRef<(auto: boolean) => void>(() => {});
+
+  /** Asistan sesli yanıtı. Metin yanıt her zaman önce ekranda (push) görünür; ses yalnız eklentidir.
+   *  - Asistan konuşurken tanıma KAPALI tutulur (kendi sesini komut sanmasın).
+   *  - handsfree: konuşma tamamlanınca mikrofon kontrollü yeniden açılır. */
+  const speak = useCallback(
+    (text: string, opts?: { handsfree?: boolean }) => {
+      lastAiRef.current = text;
+      const tts = ttsRef.current;
+      if (!tts || !tts.supported) return; // metin yanıt görünmeye devam eder
+      clearRelisten();
+      const seq = ++speakSeqRef.current;
+      const go = () => {
+        if (seq !== speakSeqRef.current) return; // daha yeni bir yanıt geldi
+        tts.speak(text, {
+          onDone: (r: SpeakResult) => {
+            lastSpeechEndRef.current = Date.now();
+            if (seq !== speakSeqRef.current) return;
+            if (r.ok && opts?.handsfree && handsfreeRef.current && openRef.current) {
+              if (handsfreeTurnsRef.current >= MAX_HANDSFREE_TURNS) {
+                handsfreeRef.current = false;
+                return;
+              }
+              relistenTimerRef.current = window.setTimeout(() => {
+                relistenTimerRef.current = null;
+                if (handsfreeRef.current && openRef.current && !recActiveRef.current && document.visibilityState !== "hidden") {
+                  startListeningRef.current(true);
+                }
+              }, RELISTEN_DELAY_MS);
+            } else if (!r.ok) {
+              handsfreeRef.current = false; // başarısız/iptal turdan sonra otomatik dinleme yok → döngü yok
+            }
+          },
+        });
+      };
+      const wait = closeMic();
+      if (wait) void wait.then(go);
+      else go();
+    },
+    [clearRelisten, closeMic],
+  );
+
+  /** Kullanıcı konuşmayı durdurur. */
+  const stopSpeaking = useCallback(() => {
+    speakSeqRef.current += 1;
+    handsfreeRef.current = false;
+    clearRelisten();
+    ttsRef.current?.cancel("user");
+  }, [clearRelisten]);
+
+  /** Mobil tarayıcı sesi engellediyse: kullanıcı dokunuşuyla son yanıtı tekrar dinlet. */
+  const retryBlockedSpeech = useCallback(() => {
+    const tts = ttsRef.current;
+    if (!tts || !tts.supported) return;
+    setTtsBlocked(false);
+    tts.unlock();
+    tts.speak(lastAiRef.current);
+  }, []);
+
+  /* Sayfa arka plana alınınca: konuşma + mikrofon durur, otomatik dinleme sıfırlanır. */
+  useEffect(() => {
+    const onVis = () => {
+      if (document.visibilityState === "hidden") {
+        speakSeqRef.current += 1;
+        killMic();
+        ttsRef.current?.cancel("background");
+      }
+    };
+    document.addEventListener("visibilitychange", onVis);
+    return () => {
+      document.removeEventListener("visibilitychange", onVis);
+      killMic();
+    };
+  }, [killMic]);
 
   useEffect(() => {
     if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight;
   }, [msgs, ui]);
-
-  /** FAZ 12C-3 — mobil sağlam speak():
-   *  - iOS: cancel() sonrası AYNI tick'te speak() yutulabiliyor → kısa gecikme.
-   *  - Cihazda Türkçe ses varsa bilinçli seçilir (yoksa varsayılan sesle konuşur).
-   *  - speak() sonrası resume(): iOS kuyruğu takılırsa devam etsin. */
-  const speak = useCallback((text: string) => {
-    const synth = (window as unknown as Win).speechSynthesis;
-    if (!synth) return;
-    try {
-      synth.cancel();
-      const u = new SpeechSynthesisUtterance(text);
-      u.lang = "tr-TR";
-      try {
-        const voices = synth.getVoices();
-        const tr = voices.find((v) => (v.lang || "").toLowerCase().startsWith("tr"));
-        if (tr) u.voice = tr;
-      } catch {
-        /* ses listesi alınamazsa voice'sız devam */
-      }
-      window.setTimeout(() => {
-        try {
-          synth.speak(u);
-        } catch {
-          /* yoksay */
-        }
-        window.setTimeout(() => {
-          try {
-            synth.resume();
-          } catch {
-            /* yoksay */
-          }
-        }, 250);
-      }, 60);
-    } catch {
-      /* ses desteklenmiyorsa sessiz devam */
-    }
-  }, []);
 
   const push = useCallback((who: Msg["who"], text: string) => {
     setMsgs((p) => [...p.slice(-40), { who, text }]);
   }, []);
 
   const run = useCallback(
-    (text: string) => {
+    (text: string, via: "voice" | "text" = "text") => {
       const clean = text.trim();
       if (!clean) return;
+      // Yazılı/çip girişinde otomatik mikrofon turu olmaz; sesli girişte kontrollü devam eder.
+      if (via === "text") handsfreeRef.current = false;
+      else handsfreeTurnsRef.current += 1;
       push("me", clean);
       const step = handleVoice(clean, vStateRef.current, ctxRef.current);
       setVState(step.state);
@@ -229,7 +332,7 @@ export default function VoiceAssistant({
       if (step.campaigns) setCampaignViews(step.campaigns);
       setLastBreakdown(step.state.cart.length ? cartBreakdown(step.state, ctxRef.current) : null);
       push("ai", step.say);
-      speak(step.say);
+      speak(step.say, { handsfree: via === "voice" });
     },
     [push, speak],
   );
@@ -333,6 +436,14 @@ export default function VoiceAssistant({
   function toggleOpen() {
     const next = !open;
     setOpen(next);
+    if (!next) {
+      // Panel kapanırken ses ve mikrofon kesinlikle durur.
+      speakSeqRef.current += 1;
+      killMic();
+      ttsRef.current?.cancel("close");
+    } else {
+      ttsRef.current?.unlock(); // bu bir kullanıcı dokunuşu: ses motorunu burada aç
+    }
     if (next && !greetedRef.current) {
       greetedRef.current = true;
       const modeWords = modeList.map((m) => MODE_LABELS[m].toLocaleLowerCase("tr-TR")).join(" / ");
@@ -347,6 +458,70 @@ export default function VoiceAssistant({
     }
   }
 
+  /** Mikrofonu başlatır. auto=true: asistan konuşması bitince kontrollü yeniden açılış. */
+  const startListening = useCallback((auto: boolean) => {
+    const w = window as unknown as Win;
+    const Ctor = w.SpeechRecognition || w.webkitSpeechRecognition;
+    if (!Ctor || recActiveRef.current) return;
+    // Asistan konuşurken tanıma açılmaz: kullanıcı söze girerse konuşma önce susturulur.
+    if (ttsRef.current?.isSpeaking()) {
+      speakSeqRef.current += 1;
+      ttsRef.current.cancel("mic");
+    }
+    clearRelisten();
+    if (!auto) handsfreeTurnsRef.current = 0;
+    const rec = new Ctor();
+    rec.lang = "tr-TR";
+    rec.interimResults = false;
+    rec.maxAlternatives = 1;
+    let gotResult = false;
+    rec.onresult = (e) => {
+      const t = (e.results?.[0]?.[0]?.transcript ?? "").trim();
+      if (!t) return;
+      // Yankı koruması: asistan hâlâ konuşuyorsa veya az önce söylediğini duyduysak komut sayma.
+      const heardSelf =
+        ttsRef.current?.isSpeaking() ||
+        (Date.now() - lastSpeechEndRef.current < 4000 && norm(t).length >= 6 && norm(lastAiRef.current).includes(norm(t)));
+      if (heardSelf) {
+        ttsLog(window as unknown as TtsHost, "engine_init", `asistanın kendi sesi yok sayıldı: "${t.slice(0, 40)}"`);
+        return;
+      }
+      gotResult = true;
+      handsfreeRef.current = true; // sesle başlayan tur: yanıt bitince mikrofon kontrollü açılır
+      run(t, "voice");
+    };
+    const settle = () => {
+      recActiveRef.current = false;
+      if (recRef.current === rec) recRef.current = null;
+      setListening(false);
+      const waiters = recEndWaitersRef.current.splice(0);
+      for (const f of waiters) f();
+    };
+    rec.onend = () => {
+      settle();
+      if (!gotResult) handsfreeRef.current = false; // sessiz tur → otomatik dinleme zinciri biter
+    };
+    rec.onerror = (e) => {
+      const code = e?.error ?? "unknown";
+      handsfreeRef.current = false;
+      settle();
+      if (code === "aborted") return; // biz durdurduk
+      if (code === "no-speech" && auto) return; // otomatik turda sessizlik hata değil
+      toast.push({ title: "Ses alınamadı", desc: "Mikrofon iznini kontrol edip tekrar dene; yazarak da devam edebilirsin.", tone: "danger" });
+    };
+    recRef.current = rec;
+    try {
+      rec.start();
+      recActiveRef.current = true;
+      setListening(true);
+    } catch {
+      recRef.current = null;
+      handsfreeRef.current = false;
+      toast.push({ title: "Mikrofon başlatılamadı", desc: "Yazarak devam edebilirsin.", tone: "danger" });
+    }
+  }, [clearRelisten, run, toast]);
+  startListeningRef.current = startListening;
+
   function toggleMic() {
     const w = window as unknown as Win;
     const Ctor = w.SpeechRecognition || w.webkitSpeechRecognition;
@@ -354,27 +529,15 @@ export default function VoiceAssistant({
       toast.push({ title: "Bu tarayıcı sesli girişi desteklemiyor", desc: "Aşağıdaki kutuya yazarak aynı akışı kullanabilirsin.", tone: "warning" });
       return;
     }
+    ttsRef.current?.unlock(); // mikrofon dokunuşu da ses motorunu açar
     if (listening) {
+      handsfreeRef.current = false;
+      clearRelisten();
       recRef.current?.stop();
       setListening(false);
       return;
     }
-    const rec = new Ctor();
-    rec.lang = "tr-TR";
-    rec.interimResults = false;
-    rec.maxAlternatives = 1;
-    rec.onresult = (e) => {
-      const t = e.results?.[0]?.[0]?.transcript ?? "";
-      if (t) run(t);
-    };
-    rec.onend = () => setListening(false);
-    rec.onerror = () => {
-      setListening(false);
-      toast.push({ title: "Ses alınamadı", desc: "Mikrofon iznini kontrol edip tekrar dene; yazarak da devam edebilirsin.", tone: "danger" });
-    };
-    recRef.current = rec;
-    rec.start();
-    setListening(true);
+    startListening(false);
   }
 
   async function submit() {
@@ -482,10 +645,23 @@ export default function VoiceAssistant({
             <div>
               <p className="font-display text-[0.98rem] font-bold">{business.name} · Sesli Asistan</p>
               <p className="text-[0.72rem] text-muted">{recSupported ? "Mikrofonla konuş veya yaz" : "Sesli giriş desteklenmiyor — yazarak devam et"}</p>
+              {ttsSupported === false ? <p className="text-[0.68rem] text-muted">Sesli yanıt bu tarayıcıda desteklenmiyor — yanıtlar yazı olarak gösterilir.</p> : null}
             </div>
+            <div className="flex items-center">
+            {speaking ? (
+              <button onClick={stopSpeaking} aria-label="Konuşmayı durdur" className="mr-1 rounded-full border border-line px-2.5 py-1 text-[0.72rem] text-ink hover:border-accent">
+                ■ Sustur
+              </button>
+            ) : null}
             <button onClick={toggleOpen} aria-label="Kapat" className="rounded-[3px] px-2 py-1 text-muted hover:text-ink">✕</button>
+            </div>
           </div>
 
+          {ttsBlocked ? (
+            <button onClick={retryBlockedSpeech} className="border-b border-line bg-canvas px-4 py-2 text-left text-[0.76rem] text-ink-700 hover:text-ink">
+              🔊 Tarayıcı sesli yanıtı engelledi — son yanıtı dinlemek için dokun.
+            </button>
+          ) : null}
           <div ref={logRef} className="flex-1 space-y-2 overflow-y-auto px-4 py-3">
             {msgs.map((m, i) => (
               <div key={i} className={`max-w-[88%] rounded-[4px] px-3 py-2 text-[0.84rem] leading-relaxed ${m.who === "ai" ? "bg-canvas text-ink-700" : "ml-auto bg-ink text-white"}`}>

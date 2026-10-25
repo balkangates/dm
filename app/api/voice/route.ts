@@ -18,6 +18,7 @@ import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { getSessionUser } from "@/lib/authz";
 import { logAudit, trackEvent } from "@/lib/queries";
+import { businessZone, isOpenAt, withinHoursAt, type HourRow } from "@/lib/money";
 import { bestCampaign, computeTotals, type OrderMode, type PriceCampaign, type PriceItem } from "@/lib/order-price";
 
 type Row = Record<string, unknown>;
@@ -92,7 +93,7 @@ export async function POST(req: Request) {
 
     const { data: biz } = await client
       .from("businesses")
-      .select("id, name, suspended_at, mode_gel_al, mode_paket_servis, mode_rezerve, accepting_orders, kdv_rate")
+      .select("id, name, country, suspended_at, mode_gel_al, mode_paket_servis, mode_rezerve, accepting_orders, kdv_rate")
       .eq("id", businessId)
       .is("suspended_at", null)
       .maybeSingle();
@@ -113,6 +114,32 @@ export async function POST(req: Request) {
         { ok: false, error: `${biz.name} şu an ${deliveryType === "REZERVE" ? "rezerve" : deliveryType === "GEL_AL" ? "gel-al" : "adrese teslim"} siparişi almıyor.` },
         { status: 409 },
       );
+
+    // Çalışma saatleri (İŞLETMENİN saat diliminde): kapalıyken gel-al / paket servis alınmaz;
+    // rezerve yalnız açılış–kapanış saatleri arasına yapılabilir. Saat tanımı yoksa engellenmez.
+    const { data: hourRows } = await client
+      .from("business_hours")
+      .select("day_of_week, opens_at, closes_at, closed")
+      .eq("business_id", businessId);
+    const hours: HourRow[] = ((hourRows ?? []) as Row[]).map((h) => ({
+      dayOfWeek: Number(h.day_of_week),
+      opensAt: String(h.opens_at ?? "00:00"),
+      closesAt: String(h.closes_at ?? "00:00"),
+      closed: Boolean(h.closed),
+    }));
+    const tz = businessZone(typeof biz.country === "string" ? biz.country : "TR");
+    if (hours.length) {
+      if (deliveryType !== "REZERVE" && !isOpenAt(hours, new Date(), tz))
+        return NextResponse.json(
+          { ok: false, closed: true, error: `${biz.name} gel-al ve paket servis siparişine kapanmıştır. Açılış ve kapanış saatleri arasına rezerve sipariş oluşturabilirsiniz.` },
+          { status: 409 },
+        );
+      if (deliveryType === "REZERVE" && reservedAt && !withinHoursAt(hours, reservedAt, tz))
+        return NextResponse.json(
+          { ok: false, error: "Rezerve saati işletmenin açılış ve kapanış saatleri arasında olmalı." },
+          { status: 409 },
+        );
+    }
 
     // FİYAT SUNUCUDA çözülür: teslimat tipine göre (adrese teslim fiyatı
     // tanımlıysa o; yoksa indirimli/temel fiyat). Eşleşmeyen satırlarda

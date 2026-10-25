@@ -8,7 +8,7 @@ import {
 import { DashSectionHead, StatusBadge, type NavItem } from "@/components/Dash";
 import { makeT } from "@/lib/i18n";
 import { CAMPAIGN_TEMPLATES, applyCampaignTemplate, type CampaignTemplate } from "@/lib/campaignTemplates";
-import { DAY_NAMES, daysUntil, money, num, pct, relative, shortDate, type Currency, type Lang } from "@/lib/money";
+import { businessZone, DAY_NAMES, daysUntil, money, num, pct, relative, shortDate, zonedClock, type Currency, type Lang } from "@/lib/money";
 import type { getBusinessData } from "@/lib/queries";
 import { getBrowserSupabase } from "@/lib/supabase/client";
 
@@ -413,7 +413,7 @@ function ProfileSection({ d, onPost, lang }: { d: BD; onPost: (r: string, b: Rec
     }),
   );
   const [hoursBusy, setHoursBusy] = useState(false);
-  const today = new Date().getDay(); // 0 = Pazar … 6 = Cumartesi (business_hours.day_of_week ile aynı)
+  const today = zonedClock(new Date(), businessZone()).day; // 0 = Pazar … 6 = Cumartesi (business_hours.day_of_week ile aynı)
 
   function patchHour(day: number, patch: Partial<HourEdit>) {
     setHours((prev) => prev.map((h) => (h.dayOfWeek === day ? { ...h, ...patch } : h)));

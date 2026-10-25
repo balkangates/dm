@@ -95,17 +95,81 @@ export const DAY_NAMES: Record<Lang, string[]> = {
 
 export type HourRow = { dayOfWeek: number; opensAt: string; closesAt: string; closed: boolean };
 
-export function isOpenNow(hours: HourRow[], now = new Date()): boolean {
-  const row = hours.find((h) => h.dayOfWeek === now.getDay());
-  if (!row || row.closed) return false;
-  const [oh, om] = row.opensAt.split(":").map(Number);
-  const [ch, cm] = row.closesAt.split(":").map(Number);
-  const open = oh * 60 + om;
-  let close = ch * 60 + cm;
-  if (close <= open) close += 24 * 60;
-  const mins = now.getHours() * 60 + now.getMinutes();
-  const m = mins < open ? mins + 24 * 60 : mins;
-  return m >= open && m <= close;
+/** İşletmenin saat dilimi (ülke koduna göre). Sunucunun/tarayıcının yerel saati KULLANILMAZ. */
+export function businessZone(country?: string | null): string {
+  switch ((country ?? "TR").toUpperCase()) {
+    case "GE": return "Asia/Tbilisi";
+    default: return "Europe/Istanbul";
+  }
+}
+
+/** Verilen anın işletme saat dilimindeki günü (0 = Pazar) ve gün içi dakikası. */
+export function zonedClock(now: Date, tz: string): { day: number; minutes: number } {
+  const parts = new Intl.DateTimeFormat("en-US", { timeZone: tz, weekday: "short", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).formatToParts(now);
+  const get = (t: string) => parts.find((p) => p.type === t)?.value ?? "";
+  const day = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].indexOf(get("weekday"));
+  return { day: day < 0 ? now.getDay() : day, minutes: (Number(get("hour")) % 24) * 60 + Number(get("minute")) };
+}
+
+const toMin = (hm: string) => {
+  const [h, m] = hm.split(":").map(Number);
+  return (h || 0) * 60 + (m || 0);
+};
+
+/** Açık mı? Kapanış dakikası KAPALI sayılır (23:00'te kapanan yer 23:00'te kapalıdır).
+ *  Gece yarısını aşan vardiya (örn. 18:00–02:00) ertesi günün ilk saatlerinde de açık sayılır. */
+export function isOpenAt(hours: HourRow[], now: Date, tz: string): boolean {
+  const { day, minutes } = zonedClock(now, tz);
+  const today = hours.find((h) => h.dayOfWeek === day);
+  if (today && !today.closed) {
+    const o = toMin(today.opensAt), c = toMin(today.closesAt);
+    if (c > o ? minutes >= o && minutes < c : minutes >= o) return true; // c <= o: gece yarısını aşar
+  }
+  const prev = hours.find((h) => h.dayOfWeek === (day + 6) % 7);
+  if (prev && !prev.closed) {
+    const o = toMin(prev.opensAt), c = toMin(prev.closesAt);
+    if (c <= o && minutes < c) return true; // dünkü vardiyanın gece taşan kısmı
+  }
+  return false;
+}
+
+export function isOpenNow(hours: HourRow[], now = new Date(), tz = businessZone()): boolean {
+  return isOpenAt(hours, now, tz);
+}
+
+/** Bugünün satırı (işletme saat diliminde). */
+export function todayHours<T extends { dayOfWeek: number }>(hours: T[], now = new Date(), tz = businessZone()): T | undefined {
+  const { day } = zonedClock(now, tz);
+  return hours.find((h) => h.dayOfWeek === day);
+}
+
+/** "HH:MM" (işletme saat diliminde bugün; geçtiyse yarın) → UTC ISO. */
+export function zonedHmToIso(hm: string, tz: string, now = new Date()): string | undefined {
+  const m = /^(\d{1,2}):(\d{2})$/.exec(hm.trim());
+  if (!m) return undefined;
+  const hh = Number(m[1]), mm = Number(m[2]);
+  if (hh > 23 || mm > 59) return undefined;
+  const ymd = new Intl.DateTimeFormat("en-CA", { timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit" }).format(now); // YYYY-MM-DD
+  const [Y, Mo, D] = ymd.split("-").map(Number);
+  const at = (dayOffset: number) => {
+    const guess = Date.UTC(Y, Mo - 1, D + dayOffset, hh, mm);
+    // saat dilimi ofseti: aynı anın tz'deki duvar saati ile UTC farkı
+    const z = zonedClock(new Date(guess), tz);
+    const wantMin = hh * 60 + mm;
+    let diff = wantMin - z.minutes;
+    if (diff > 720) diff -= 1440;
+    if (diff < -720) diff += 1440;
+    return new Date(guess + diff * 60_000);
+  };
+  let d = at(0);
+  if (d.getTime() < now.getTime() - 5 * 60_000) d = at(1);
+  return d.toISOString();
+}
+
+/** Bir anın (örn. rezerve saati) o günkü çalışma saatleri içinde olup olmadığı. Satır yoksa true (engelleme). */
+export function withinHoursAt(hours: HourRow[], at: Date, tz: string): boolean {
+  if (!hours.length) return true;
+  return isOpenAt(hours, at, tz);
 }
 
 export function slugify(input: string): string {

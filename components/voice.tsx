@@ -22,11 +22,12 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { usePathname } from "next/navigation";
 import { Button, Input, useToast } from "@/components/ds";
 import {
-  applyConfirm, applyDetails, applyMode, applyPayment, announceCampaign, cartBreakdown, enabledModes, handleVoice,
+  applyConfirm, applyDetails, applyMode, applyPayment, announceCampaign, cartBreakdown, closedNotice, enabledModes, handleVoice,
   initialVoiceState, MODE_LABELS, modePrice, paymentScopeHint,
   type VoiceCampaign, type VoiceCtx, type VoiceMode, type VoicePayment, type VoiceProduct, type VoiceState, type VoiceUi,
 } from "@/lib/voice";
 import { breakdownLines } from "@/lib/order-price";
+import { isOpenNow, withinHoursAt, zonedHmToIso, type HourRow } from "@/lib/money";
 import { createTts, ttsLog, type SpeakResult, type Tts, type TtsHost } from "@/lib/tts";
 
 type Msg = { who: "ai" | "me"; text: string };
@@ -37,17 +38,6 @@ const SHORT_MODE: Record<VoiceMode, string> = {
   PAKET_SERVIS: "Adrese teslim",
   REZERVE: "Rezerve",
 };
-
-/** FAZ 12C-3 — "HH:MM" → bugünün (geçtiyse yarının) tarihiyle ISO an.
- *  Sunucu 30 gün + geçmiş kontrolü yapar; burada yalnız yerel ISO üretilir. */
-function reservedIso(hm: string): string | undefined {
-  const m = /^(\d{1,2}):(\d{2})$/.exec(hm.trim());
-  if (!m) return undefined;
-  const d = new Date();
-  d.setHours(Number(m[1]), Number(m[2]), 0, 0);
-  if (d.getTime() < Date.now() - 5 * 60_000) d.setDate(d.getDate() + 1);
-  return d.toISOString();
-}
 
 type Rec = {
   lang: string;
@@ -97,6 +87,11 @@ export default function VoiceAssistant({
     acceptingOrders?: boolean;
     /** FAZ 12C — işletme varsayılan KDV oranı (%). */
     kdvRate?: number;
+    /** Sunucunun hesapladığı ilk açık/kapalı durumu; istemci saatlerden canlı yeniler. */
+    openNow?: boolean;
+    /** İşletmenin saat dilimi (örn. Europe/Istanbul). */
+    timeZone?: string;
+    hours?: HourRow[];
   };
   products: VoiceProduct[];
   campaigns: VoiceCampaign[];
@@ -135,6 +130,22 @@ export default function VoiceAssistant({
   const pathname = usePathname();
   const loginHref = `/giris?next=${encodeURIComponent(pathname || "/")}`;
 
+  // Çalışma saati dışında gel-al / paket servis kapanır; durum her 30 sn ve öne gelince yenilenir.
+  const tz = business.timeZone ?? "Europe/Istanbul";
+  const [openNow, setOpenNow] = useState<boolean>(business.openNow ?? true);
+  useEffect(() => {
+    const hrs = business.hours;
+    if (!hrs?.length) return;
+    const tick = () => setOpenNow(isOpenNow(hrs, new Date(), tz));
+    tick();
+    const id = window.setInterval(tick, 30_000);
+    document.addEventListener("visibilitychange", tick);
+    return () => {
+      window.clearInterval(id);
+      document.removeEventListener("visibilitychange", tick);
+    };
+  }, [business.hours, tz]);
+
   const ctx = useMemo<VoiceCtx>(
     () => ({
       businessName: business.name,
@@ -144,8 +155,9 @@ export default function VoiceAssistant({
       modes: business.modes,
       acceptingOrders: business.acceptingOrders,
       businessKdvRate: business.kdvRate,
+      openNow,
     }),
-    [business, products, campaigns],
+    [business, products, campaigns, openNow],
   );
   const ctxRef = useRef(ctx);
   ctxRef.current = ctx;
@@ -447,9 +459,12 @@ export default function VoiceAssistant({
     if (next && !greetedRef.current) {
       greetedRef.current = true;
       const modeWords = modeList.map((m) => MODE_LABELS[m].toLocaleLowerCase("tr-TR")).join(" / ");
+      const closedMsg = closedNotice(ctx);
       const say = business.acceptingOrders === false
         ? `Merhaba! Ben ${business.name} ücretsiz sesli asistanıyım. Şu an sipariş almıyoruz; kampanyalarımı sorabilir, menüye bakabilirsin.`
-        : `Merhaba! Ben ${business.name} ücretsiz sesli asistanıyım. Kampanyalarımı sorabilir, menüye bakabilir veya sipariş verebilirsin — ${modeWords}. Ödemeyi nakit veya kartla yaparsın.`;
+        : closedMsg
+          ? `Merhaba! Ben ${business.name} ücretsiz sesli asistanıyım. ${closedMsg} Kampanyalarımı sorabilir, menüye bakabilirsin.`
+          : `Merhaba! Ben ${business.name} ücretsiz sesli asistanıyım. Kampanyalarımı sorabilir, menüye bakabilir veya sipariş verebilirsin — ${modeWords}. Ödemeyi nakit veya kartla yaparsın.`;
       push("ai", say);
       speak(say);
       if (!user) {
@@ -553,6 +568,26 @@ export default function VoiceAssistant({
       toast.push({ title: "Rezerve saat zorunlu", desc: "İşletme masa planını saate göre yapar — saati gir.", tone: "warning" });
       return;
     }
+    // Çalışma saati dışında gel-al / paket servis gönderilmez; rezerve ise saat çalışma saatleri içinde olmalı.
+    if (s.mode !== "REZERVE" && business.hours?.length && !isOpenNow(business.hours, new Date(), tz)) {
+      const m = closedNotice({ ...ctxRef.current, openNow: false }) ?? "İşletme şu an kapalı.";
+      push("ai", m);
+      speak(m);
+      toast.push({ title: "İşletme şu an kapalı", desc: "Rezerve sipariş oluşturabilirsin.", tone: "warning" });
+      return;
+    }
+    if (s.mode === "REZERVE" && s.reservedAt && business.hours?.length) {
+      const iso = zonedHmToIso(s.reservedAt, tz);
+      if (iso && !withinHoursAt(business.hours, new Date(iso), tz)) {
+        setForm({ name: s.name, phone: s.phone, address: s.address, reservedAt: "" });
+        setUi("details");
+        const m = "Rezerve saati işletmenin açılış ve kapanış saatleri arasında olmalı. Lütfen çalışma saatleri içinde bir saat seç.";
+        push("ai", m);
+        speak(m);
+        toast.push({ title: "Rezerve saati çalışma saatleri dışında", tone: "warning" });
+        return;
+      }
+    }
     setSending(true);
     try {
       const res = await fetch("/api/voice", {
@@ -573,7 +608,7 @@ export default function VoiceAssistant({
           customerDistrict: business.district,
           address: s.address,
           // FAZ 12C-3 — rezervasyon saati (REZERVE'de zorunlu; sunucu da doğrular).
-          ...(s.mode === "REZERVE" && s.reservedAt ? { reservedAt: reservedIso(s.reservedAt) } : {}),
+          ...(s.mode === "REZERVE" && s.reservedAt ? { reservedAt: zonedHmToIso(s.reservedAt, tz) } : {}),
         }),
       });
       const json = await res.json().catch(() => ({ ok: false }) as Record<string, unknown>);
@@ -657,6 +692,9 @@ export default function VoiceAssistant({
             </div>
           </div>
 
+          {!openNow && business.acceptingOrders !== false ? (
+            <p className="border-b border-line bg-canvas px-4 py-2 text-[0.76rem] leading-snug text-ink-700">{closedNotice(ctx)}</p>
+          ) : null}
           {ttsBlocked ? (
             <button onClick={retryBlockedSpeech} className="border-b border-line bg-canvas px-4 py-2 text-left text-[0.76rem] text-ink-700 hover:text-ink">
               🔊 Tarayıcı sesli yanıtı engelledi — son yanıtı dinlemek için dokun.

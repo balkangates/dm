@@ -70,6 +70,8 @@ export type VoiceCtx = {
   modes?: VoiceModes;
   acceptingOrders?: boolean;
   businessKdvRate?: number;
+  /** false = çalışma saatleri dışında (İşletmenin saat diliminde). Gel-al ve paket servis kapanır; yalnız REZERVE kalır. */
+  openNow?: boolean;
 };
 
 export type VoiceOptionPick = { name: string; wanted: boolean };
@@ -141,14 +143,21 @@ export function detectDeliveryMode(text: string): VoiceMode | null {
   return null;
 }
 
-/** İşletmenin açık modları (varsayılan: hepsi). */
+/** İşletmenin açık modları (varsayılan: hepsi). Çalışma saati dışında yalnız REZERVE kalır. */
 export function enabledModes(ctx: VoiceCtx): VoiceMode[] {
-  if (!ctx.modes) return ["GEL_AL", "REZERVE", "PAKET_SERVIS"];
   const out: VoiceMode[] = [];
-  if (ctx.modes.gelAl !== false) out.push("GEL_AL");
-  if (ctx.modes.rezerve !== false) out.push("REZERVE");
-  if (ctx.modes.paketServis !== false) out.push("PAKET_SERVIS");
-  return out;
+  if (!ctx.modes || ctx.modes.gelAl !== false) out.push("GEL_AL");
+  if (!ctx.modes || ctx.modes.rezerve !== false) out.push("REZERVE");
+  if (!ctx.modes || ctx.modes.paketServis !== false) out.push("PAKET_SERVIS");
+  return ctx.openNow === false ? out.filter((m) => m === "REZERVE") : out;
+}
+
+/** Çalışma saati dışındaysa müşteriye söylenecek bilgi (yoksa null). */
+export function closedNotice(ctx: VoiceCtx): string | null {
+  if (ctx.openNow !== false) return null;
+  return ctx.modes && ctx.modes.rezerve === false
+    ? `${ctx.businessName} şu an kapalı; gel-al ve paket servis siparişine kapanmıştır. Açılış saatinde tekrar sipariş verebilirsin.`
+    : `${ctx.businessName} gel-al ve paket servis siparişine kapanmıştır. Açılış ve kapanış saatleri arasına rezerve sipariş oluşturabilirsiniz.`;
 }
 export function modeEnabled(ctx: VoiceCtx, mode: VoiceMode): boolean {
   return enabledModes(ctx).includes(mode);
@@ -394,7 +403,9 @@ const modesPhrase = (ctx: VoiceCtx) => {
 };
 
 const capabilities = (B: string, ctx: VoiceCtx) =>
-  ctx.acceptingOrders === false
+  ctx.openNow === false && ctx.acceptingOrders !== false
+    ? `Ben ${B} ücretsiz sesli asistanıyım. ${closedNotice(ctx)} Kampanyalarımı ve ürünlerimi sorabilirsin.`
+    : ctx.acceptingOrders === false
     ? `Ben ${B} ücretsiz sesli asistanıyım. Şu an sipariş almıyoruz; kampanyalarımı sorabilir, ürün ve fiyatlarımı öğrenebilirsin.`
     : `Ben ${B} ücretsiz sesli asistanıyım. Kampanyalarını sorabilir, ürün ve fiyatlarını öğrenebilir veya sipariş verebilirsin — ${modesPhrase(ctx)}. Ödemeyi nakit veya kartla yaparsın; online ödeme yok.`;
 
@@ -563,6 +574,7 @@ function askNextDetail(s: VoiceState): { say: string; ui: VoiceUi; state: VoiceS
 function orderGate(ctx: VoiceCtx, mode: VoiceMode | null): string | null {
   if (ctx.acceptingOrders === false)
     return `${ctx.businessName} şu an sipariş almıyor. Kampanyalarımı sorabilir veya ürün ve fiyatlarımı öğrenebilirsin.`;
+  if (ctx.openNow === false && (mode === "GEL_AL" || mode === "PAKET_SERVIS")) return closedNotice(ctx);
   if (mode && !modeEnabled(ctx, mode)) {
     const others = modesPhrase(ctx);
     return `${ctx.businessName} şu an ${MODE_LABELS[mode].toLocaleLowerCase("tr-TR")} siparişi almıyor${others ? `; yalnız ${others}` : ""}.`;
@@ -644,13 +656,14 @@ export function handleVoice(input: string, state: VoiceState, ctx: VoiceCtx): Vo
           cart,
           pendingQtyFor: askQty ? askQty.name : null,
         };
+        const pre = !modeInUtterance && closedNotice(ctx) ? `${closedNotice(ctx)} ` : "";
         return {
           state: next,
-          say: cart.length
+          say: pre + (cart.length
             ? askQty
               ? `Tamam, ${modeWord(effMode)}. Sepete ekledim: ${cartSummary(next)}. ${askQty.name} için adet ne olsun?`
               : `Tamam, ${modeWord(effMode)}. Sepete ekledim: ${cartSummary(next)}. ${totalSay(next, ctx)}. Onaylıyor musun, ürün de ekleyebilirsin.`
-            : `Tamam, ${modeWord(effMode)} siparişini alırım. Menü karşında — adet seçip sepete ekleyebilir ya da istediğini söyleyebilirsin.`,
+            : `Tamam, ${modeWord(effMode)} siparişini alırım. Menü karşında — adet seçip sepete ekleyebilir ya da istediğini söyleyebilirsin.`),
           // FAZ 12C-2: sepet boşken liste açılır (manuel adet/sepete ekle).
           ui: askQty ? "qty" : cart.length ? "cart" : "products",
         };
@@ -658,7 +671,7 @@ export function handleVoice(input: string, state: VoiceState, ctx: VoiceCtx): Vo
       return {
         state: { ...state, stage: "delivery" },
         say: ctx.products.length
-          ? `Tabii! Siparişini nasıl alacaksın — ${modesPhrase(ctx)}?`
+          ? `${closedNotice(ctx) ? `${closedNotice(ctx)} ` : "Tabii! "}Siparişini nasıl alacaksın — ${modesPhrase(ctx)}?`
           : `${ctx.businessName}'da ürün listesi henüz yüklenmemiş; kampanyalarımıza bakabilirsin.`,
         ui: ctx.products.length ? "delivery" : "menu",
       };

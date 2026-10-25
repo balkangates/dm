@@ -9,7 +9,7 @@ import { Icon } from "@/components/icons";
 import { CampaignActions } from "@/components/CampaignActions";
 import { CampaignCardView } from "@/components/discovery";
 import { ensureSeeded, getCampaignBySlug, trackEvent } from "@/lib/queries";
-import { DAY_NAMES, daysUntil, isOpenNow, money, shortDate, type Currency } from "@/lib/money";
+import { businessZone, DAY_NAMES, daysUntil, isOpenNow, money, shortDate, todayHours, type Currency } from "@/lib/money";
 
 export const dynamic = "force-dynamic";
 
@@ -39,7 +39,9 @@ export default async function CampaignDetail({ params }: P) {
   const c = d.campaign;
   const cur = (c.currency ?? "TRY") as Currency;
   const left = daysUntil(c.endsAt);
-  const open = isOpenNow(d.hours);
+  const tz = businessZone(d.business?.country);
+  const open = isOpenNow(d.hours, new Date(), tz);
+  const todayRow = todayHours(d.hours, new Date(), tz);
   const session: SessionLite = user
     ? { id: user.id, name: user.name, email: user.email, role: user.role, businessId: user.businessId, referralCode: user.referralCode }
     : null;
@@ -191,7 +193,7 @@ export default async function CampaignDetail({ params }: P) {
               <p className="mt-1 text-[0.86rem] leading-relaxed text-muted">{d.business?.address}</p>
               <div className="mt-3 flex items-center gap-2">
                 <Badge tone={open ? "positive" : "neutral"}>{open ? "Şimdi açık" : "Kapalı"}</Badge>
-                <span className="tabular text-[0.8rem] text-muted">{d.hours.find((h) => h.dayOfWeek === new Date().getDay())?.opensAt}–{d.hours.find((h) => h.dayOfWeek === new Date().getDay())?.closesAt}</span>
+                <span className="tabular text-[0.8rem] text-muted">{todayRow?.opensAt}–{todayRow?.closesAt}</span>
               </div>
               <div className="mt-4 grid gap-2">
                 <Button href={`tel:${d.business?.phone ?? ""}`} variant="secondary" size="sm" icon={<Icon.store size={14} />}>Ara</Button>

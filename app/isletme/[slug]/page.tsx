@@ -9,7 +9,7 @@ import { Icon } from "@/components/icons";
 import { CampaignCardView } from "@/components/discovery";
 import VoiceAssistant from "@/components/voice";
 import { ensureSeeded, getBusinessBySlug, trackEvent } from "@/lib/queries";
-import { DAY_NAMES, isOpenNow, money, type Currency } from "@/lib/money";
+import { businessZone, DAY_NAMES, isOpenNow, money, todayHours, type Currency } from "@/lib/money";
 
 export const dynamic = "force-dynamic";
 type P = { params: Promise<{ slug: string }> };
@@ -38,8 +38,10 @@ export default async function BusinessPage({ params }: P) {
 
   const b = d.biz;
   const cur = (b.currency ?? "TRY") as Currency;
-  const open = isOpenNow(d.hours);
-  const today = d.hours.find((h) => h.dayOfWeek === new Date().getDay());
+  // Açık/kapalı ve "bugün" İŞLETMENİN saat diliminde hesaplanır (sunucu saati değil).
+  const tz = businessZone(b.country);
+  const open = isOpenNow(d.hours, new Date(), tz);
+  const today = todayHours(d.hours, new Date(), tz);
   const session: SessionLite = user ? { id: user.id, name: user.name, email: user.email, role: user.role, businessId: user.businessId, referralCode: user.referralCode } : null;
 
   const jsonLd = {
@@ -178,7 +180,7 @@ export default async function BusinessPage({ params }: P) {
                 <p className="text-[0.72rem] font-semibold uppercase tracking-[0.14em] text-muted">Çalışma saatleri</p>
                 <ul className="mt-2 space-y-1.5">
                   {d.hours.map((h) => (
-                    <li key={h.id} className={`flex items-center justify-between text-[0.84rem] ${h.dayOfWeek === new Date().getDay() ? "font-semibold text-accent" : "text-muted"}`}>
+                    <li key={h.id} className={`flex items-center justify-between text-[0.84rem] ${h.dayOfWeek === today?.dayOfWeek ? "font-semibold text-accent" : "text-muted"}`}>
                       <span>{DAY_NAMES.tr[h.dayOfWeek]}</span>
                       <span className="tabular">{h.closed ? "Kapalı" : `${h.opensAt}–${h.closesAt}`}</span>
                     </li>
@@ -213,6 +215,10 @@ export default async function BusinessPage({ params }: P) {
           modes: { gelAl: b.modeGelAl, rezerve: b.modeRezerve, paketServis: b.modePaketServis },
           acceptingOrders: b.acceptingOrders,
           kdvRate: b.kdvRate,
+          // Çalışma saatleri dışında gel-al / paket servis kapanır; yalnız rezerve kalır.
+          openNow: open,
+          timeZone: tz,
+          hours: d.hours.map((h) => ({ dayOfWeek: h.dayOfWeek, opensAt: h.opensAt, closesAt: h.closesAt, closed: h.closed })),
         }}
         products={d.products.filter((p) => p.active).map((p) => ({ name: p.name, priceCents: p.priceCents, discountPriceCents: p.discountPriceCents, deliveryPriceCents: p.deliveryPriceCents, options: p.options, kdvRate: p.kdvRate }))}
         campaigns={d.campaigns.map((c) => ({ title: c.title, discountPercent: c.discountPercent, discountAmountCents: c.discountAmountCents, minBasketCents: c.minBasketCents, startsAt: c.startsAt, endsAt: c.endsAt, serviceMode: c.serviceMode, serviceModes: c.serviceModes, paymentScope: c.paymentScope }))}

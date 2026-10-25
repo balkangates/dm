@@ -106,7 +106,7 @@ test("2 art arda konuşma: eskisi 'superseded', yenisi tamamlanır, sahte hata k
 test("3 Türkçe ses yok → varsayılan ses + kayıt; liste boş → no_voices + lang tr-TR", () => {
   let e = setup({ voices: [{ name: "Samantha", lang: "en-US", default: true }] });
   createTts(e.host).speak("Merhaba"); e.advance(300);
-  assert.equal(e.spoken[0].lang, "en-US"); assert.equal((e.spoken[0].voice as V).name, "Samantha"); assert.deepEqual(e.codes(), ["no_turkish_voice"]);
+  assert.equal(e.spoken[0].lang, "tr-TR"); assert.equal(e.spoken[0].voice, null); assert.deepEqual(e.codes(), ["no_turkish_voice"]);
   __resetTtsLogOnce();
   e = setup({ voices: [] });
   createTts(e.host).speak("Merhaba"); e.advance(300);

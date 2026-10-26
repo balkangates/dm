@@ -23,7 +23,7 @@ import { usePathname } from "next/navigation";
 import { Button, Input, useToast } from "@/components/ds";
 import {
   applyConfirm, applyDetails, applyMode, applyPayment, announceCampaign, cartBreakdown, closedNotice, enabledModes, handleVoice,
-  initialVoiceState, MODE_LABELS, modePrice, paymentScopeHint,
+  initialVoiceState, MODE_LABELS, modePrice, paymentScopeHint, scanNumber,
   type VoiceCampaign, type VoiceCtx, type VoiceMode, type VoicePayment, type VoiceProduct, type VoiceState, type VoiceUi,
 } from "@/lib/voice";
 import { breakdownLines } from "@/lib/order-price";
@@ -114,6 +114,9 @@ export default function VoiceAssistant({
   const [ttsSupported, setTtsSupported] = useState<boolean | null>(null);
   const [speaking, setSpeaking] = useState(false);
   const [ttsBlocked, setTtsBlocked] = useState(false);
+  /** Ürün adı tanınamadı: sunucu en yakın ürünü arıyor. */
+  const [checking, setChecking] = useState(false);
+  const lookupSeqRef = useRef(0);
   const [sending, setSending] = useState(false);
   const [orderId, setOrderId] = useState<string | null>(null);
   const [lastBreakdown, setLastBreakdown] = useState<ReturnType<typeof cartBreakdown> | null>(null);
@@ -159,6 +162,8 @@ export default function VoiceAssistant({
     }),
     [business, products, campaigns, openNow],
   );
+  const businessIdRef = useRef(business.id);
+  businessIdRef.current = business.id;
   const ctxRef = useRef(ctx);
   ctxRef.current = ctx;
   const vStateRef = useRef(vState);
@@ -336,6 +341,8 @@ export default function VoiceAssistant({
       // Yazılı/çip girişinde otomatik mikrofon turu olmaz; sesli girişte kontrollü devam eder.
       if (via === "text") handsfreeRef.current = false;
       else handsfreeTurnsRef.current += 1;
+      lookupSeqRef.current += 1; // bekleyen ürün araması varsa sonucu artık geçersiz
+      setChecking(false);
       push("me", clean);
       const step = handleVoice(clean, vStateRef.current, ctxRef.current);
       setVState(step.state);
@@ -343,6 +350,44 @@ export default function VoiceAssistant({
       setUi(step.ui);
       if (step.campaigns) setCampaignViews(step.campaigns);
       setLastBreakdown(step.state.cart.length ? cartBreakdown(step.state, ctxRef.current) : null);
+      if (step.lookup) {
+        // Ürün adı tanınamadı → sunucu (Gemini, yoksa yerel yedek) en yakın ürünü bulur; sepete EKLENMEZ, evet/hayır teyidi istenir.
+        const seq = lookupSeqRef.current;
+        const original = step.lookup;
+        setChecking(true);
+        void (async () => {
+          let match: string | null = null;
+          try {
+            const ctrl = new AbortController();
+            const timer = window.setTimeout(() => ctrl.abort(), 9000);
+            const res = await fetch("/api/voice/match", {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({ businessId: businessIdRef.current, text: original }),
+              signal: ctrl.signal,
+            });
+            window.clearTimeout(timer);
+            const json = (await res.json().catch(() => ({}))) as { ok?: boolean; match?: string | null };
+            if (json.ok && typeof json.match === "string" && json.match) match = json.match;
+          } catch {
+            /* ağ/zaman aşımı: normal "anlayamadım" yanıtı */
+          }
+          if (seq !== lookupSeqRef.current) return; // kullanıcı bu arada başka şey söyledi/yazdı
+          setChecking(false);
+          if (match) {
+            const next: VoiceState = { ...vStateRef.current, suggest: { name: match, qty: scanNumber(original), text: original } };
+            setVState(next);
+            vStateRef.current = next;
+            const ask = `${match} demek istedin, doğru mu? Evet ya da hayır de.`;
+            push("ai", ask);
+            speak(ask, { handsfree: via === "voice" });
+          } else {
+            push("ai", step.say);
+            speak(step.say, { handsfree: via === "voice" });
+          }
+        })();
+        return;
+      }
       push("ai", step.say);
       speak(step.say, { handsfree: via === "voice" });
     },
@@ -990,6 +1035,16 @@ export default function VoiceAssistant({
             ) : null}
           </div>
 
+          {checking ? <p className="px-4 pb-1 text-[0.76rem] text-muted" aria-live="polite">Ürünü kontrol ediyorum…</p> : null}
+          {vState.suggest ? (
+            <div className="border-t border-line bg-canvas px-4 py-2">
+              <p className="text-[0.82rem] text-ink-700"><strong className="text-ink">{vState.suggest.name}</strong> demek istedin, doğru mu?</p>
+              <div className="mt-1.5 flex gap-2">
+                <Button size="sm" variant="primary" onClick={() => run("Evet")}>Evet</Button>
+                <Button size="sm" variant="secondary" onClick={() => run("Hayır")}>Hayır</Button>
+              </div>
+            </div>
+          ) : null}
           <div className="border-t border-line px-4 py-2">
             <div className="flex flex-wrap gap-1.5">
               {["Kampanyalar neler?", "Menü"].map((q) => (

@@ -25,6 +25,7 @@
  * online ödeme YOKTUR — ödeme kapıda veya iş yerinde nakit/kartla yapılır.
  */
 import { bestCampaign, computeTotals, type OrderMode, type PriceBreakdown } from "@/lib/order-price";
+import { fold, residualText } from "@/lib/product-match";
 
 export type VoiceMode = OrderMode;
 
@@ -97,6 +98,10 @@ export type VoiceState = {
   payment: VoicePayment | null;
   /** Adet sorusu beklenen satır (FAZ 12C). */
   pendingQtyFor?: string | null;
+  /** Ürün adı tanınamadı → "X demek istedin, doğru mu?" evet/hayır teyidi bekleniyor. */
+  suggest?: { name: string; qty: number | null; text: string } | null;
+  /** Teyitle onaylanan ürün; sipariş tipi seçilince sepete eklenir. */
+  carryText?: string | null;
 };
 
 export type VoiceUi =
@@ -109,6 +114,8 @@ export type VoiceStep = {
   /** FAZ 12C-2: kart nesnesi de taşınır — tıklanınca TEK kampanya sesli anlatılır. */
   campaigns?: Array<{ title: string; discountLabel: string; campaign?: VoiceCampaign }>;
   products?: Array<{ name: string; priceLabel: string }>;
+  /** Ürün adı yerelde tanınamadı: sunucu (Gemini → yerel yedek) en yakın ürünü arasın. `say` bulunamazsa söylenecek metindir. */
+  lookup?: string;
 };
 
 export const initialVoiceState = (): VoiceState => ({
@@ -121,6 +128,8 @@ export const initialVoiceState = (): VoiceState => ({
   reservedAt: null,
   payment: null,
   pendingQtyFor: null,
+  suggest: null,
+  carryText: null,
 });
 
 /* ------------------------------ fiyatlar ------------------------------ */
@@ -582,6 +591,13 @@ function orderGate(ctx: VoiceCtx, mode: VoiceMode | null): string | null {
   return null;
 }
 
+/** Ürün adı gibi görünen (kısa) ve yerelde tanınmayan söylem → sunucudan en yakın ürün aranır. */
+function wantsLookup(t: string, ctx: VoiceCtx): boolean {
+  if (!ctx.products.length || ctx.acceptingOrders === false) return false;
+  const r = residualText(t);
+  return r.length >= 3 && r.split(" ").length <= 5;
+}
+
 /* ------------------------------ ana motor ------------------------------ */
 
 export function handleVoice(input: string, state: VoiceState, ctx: VoiceCtx): VoiceStep {
@@ -595,6 +611,29 @@ export function handleVoice(input: string, state: VoiceState, ctx: VoiceCtx): Vo
       say: "Tamam, vazgeçtim. İstersen kampanyalarıma bakabilir ya da daha sonra sipariş verebilirsin.",
       ui: "menu",
     };
+  }
+
+  /* ------------- ÜRÜN ÖNERİSİ TEYİDİ (evet / hayır) ------------- */
+  if (state.suggest) {
+    const f = fold(input);
+    const no = /(^| )(hayir|yanlis|degil|olmaz|istemiyorum|yok|hayir degil|no)( |$)/.test(f);
+    const yes = !no && /(^| )(evet|dogru|aynen|tamam|olur|tabi|tabii|he|yes|onayla|onayliyorum|ayni)( |$)/.test(f);
+    const sg = state.suggest;
+    const cleared: VoiceState = { ...state, suggest: null };
+    if (yes) {
+      const phrase = `${sg.qty != null ? `${sg.qty} ` : ""}${sg.name}`;
+      const r = handleVoice(phrase, cleared, ctx);
+      if (r.state.stage === "delivery" && !r.state.cart.length) return { ...r, state: { ...r.state, carryText: phrase }, say: `Tamam, ${sg.name}. ${r.say}` };
+      return r;
+    }
+    if (no)
+      return {
+        state: cleared,
+        say: "Tamam. Ürün adını bir daha söyler misin? İstersen 'menü' diyerek ürünleri görebilirsin.",
+        ui: state.stage === "ordering" ? "products" : stageUi(state.stage),
+      };
+    // Evet/hayır değil → öneriyi bırak, söyleneni normal işle.
+    return handleVoice(input, cleared, ctx);
   }
 
   /* -------------------------------- QTY -------------------------------- */
@@ -644,6 +683,15 @@ export function handleVoice(input: string, state: VoiceState, ctx: VoiceCtx): Vo
     const effMode: VoiceMode | null = modeInUtterance ?? (ms.length === 1 ? ms[0] : state.mode);
     const direct = matchProductsDetailed(t, ctx.products, effMode);
     attachOptions(direct, t, ctx);
+    // Ürün adı gibi duran ama tanınmayan söylem (örn. "lahmacum"): önce en yakın ürünü sor.
+    if (!direct.length && !modeInUtterance && (intent === "ORDER" || intent === "UNKNOWN") && wantsLookup(t, ctx)) {
+      return {
+        state,
+        say: `Anlayamadım. Kampanyalarımı sorabilir, ürün ve fiyatlarımı öğrenebilir ya da sipariş verebilirsin — ${modesPhrase(ctx)}. Ne yapmak istersin?`,
+        ui: "menu",
+        lookup: input,
+      };
+    }
     // FAZ 12C-2: yalnız "gel al" / "rezerve" / "adrese teslim" söylenirse de sipariş başlar.
     if (direct.length || intent === "ORDER" || modeInUtterance) {
       if (effMode && modeEnabled(ctx, effMode) && (modeInUtterance || ms.length === 1)) {
@@ -701,11 +749,11 @@ export function handleVoice(input: string, state: VoiceState, ctx: VoiceCtx): Vo
         ui: "delivery",
       };
     }
-    const direct = matchProductsDetailed(t, ctx.products, mode);
+    const direct = matchProductsDetailed(state.carryText ? `${state.carryText} ${t}` : t, ctx.products, mode);
     attachOptions(direct, t, ctx);
     const askQty = direct.find((l) => !l.qtyExplicit);
     const cart = mergeLines(state.cart, stripFlags(direct));
-    const next: VoiceState = { ...state, stage: askQty ? "qty" : "ordering", mode, cart, pendingQtyFor: askQty ? askQty.name : null };
+    const next: VoiceState = { ...state, stage: askQty ? "qty" : "ordering", mode, cart, pendingQtyFor: askQty ? askQty.name : null, carryText: null };
     return {
       state: next,
       say: cart.length
@@ -784,6 +832,7 @@ export function handleVoice(input: string, state: VoiceState, ctx: VoiceCtx): Vo
       state,
       say: `Bu ürünü menüde bulamadım. Söylediğin ürünün tam adını tekrar eder misin? Menüdeki ürünleri 'menü' diyerek öğrenebilirsin.`,
       ui: "cart",
+      ...(wantsLookup(t, ctx) ? { lookup: input } : {}),
     };
   }
 

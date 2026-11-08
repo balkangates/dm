@@ -1,11 +1,13 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { Suspense, useEffect, useRef, useState, type ReactNode } from "react";
 import { Avatar, Badge, Button, Icon, Logo } from "@/components/ds";
 import { COUNTRIES, LANGS, makeT } from "@/lib/i18n";
 import { CURRENCIES, type Currency, type Lang } from "@/lib/money";
+import { ModeSwitch } from "@/components/ModeSwitch";
+import { MODE_PARAM, parseMode, resolveViewMode, withMode, type ViewMode } from "@/lib/viewMode";
 
 export type SessionLite = {
   id: string;
@@ -130,20 +132,69 @@ export function LocaleSwitcher({
   );
 }
 
-export function Header({
-  user,
-  lang,
-  currency,
-  country,
-}: {
+type NavLink = { href: string; label: string };
+
+/**
+ * Moda göre menü. `explicit`: URL'de açık ?mod= varsa site içi bağlantılara taşınır
+ * (örn. işletme rolüyle ?mod=musteri seçildiyse /kampanyalar'da da müşteri görünümü sürer).
+ * Anasayfa çapaları her zaman geçerli modu taşır; hedef bölüm yalnızca o modda vardır.
+ */
+export function navLinksFor(mode: ViewMode, t: ReturnType<typeof makeT>, explicit: ViewMode | null): NavLink[] {
+  const keep = (href: string) => withMode(href, explicit);
+  const anchor = (hash: string) => withMode(`/${hash}`, mode);
+  if (mode === "isletme") {
+    return [
+      { href: keep("/fiyatlar"), label: t("nav.solutions") },
+      { href: anchor("#ai-program"), label: t("nav.ai28") },
+      { href: anchor("#qr-dogrulama"), label: t("nav.qrVerify") },
+      { href: keep("/kayit?tip=isletme"), label: t("nav.addBusiness") },
+      { href: keep("/islem-akisi"), label: t("nav.flow") },
+      { href: keep("/videolar"), label: t("nav.videos") },
+    ];
+  }
+  return [
+    { href: keep("/kampanyalar"), label: t("nav.campaigns") },
+    { href: keep("/online-firsatlar"), label: t("nav.online") },
+    { href: keep("/isletmeler"), label: t("nav.businesses") },
+    { href: anchor("#kategoriler"), label: t("nav.categories") },
+    { href: anchor("#nasil-calisir"), label: t("nav.how") },
+    { href: keep("/islem-akisi"), label: t("nav.flow") },
+    { href: keep("/videolar"), label: t("nav.videos") },
+  ];
+}
+
+type HeaderProps = {
   user: SessionLite;
   lang: Lang;
   currency: Currency;
   country: string;
-}) {
+};
+
+/**
+ * useSearchParams statik üretimde Suspense ister. Sarmalayıcı, parametre okunana dek
+ * (ve statik kabukta) rol/varsayılan moda göre çizilen aynı başlığı gösterir.
+ */
+export function Header(props: HeaderProps) {
+  return (
+    <Suspense fallback={<HeaderView {...props} search="" />}>
+      <HeaderWithParams {...props} />
+    </Suspense>
+  );
+}
+
+function HeaderWithParams(props: HeaderProps) {
+  const sp = useSearchParams();
+  return <HeaderView {...props} search={sp.toString()} />;
+}
+
+function HeaderView({ user, lang, currency, country, search }: HeaderProps & { search: string }) {
   const t = makeT(lang);
   const [open, setOpen] = useState(false);
   const router = useRouter();
+
+  const explicit = parseMode(new URLSearchParams(search).get(MODE_PARAM));
+  const mode = resolveViewMode({ param: explicit, role: user?.role });
+  const links = navLinksFor(mode, t, explicit);
 
   async function logout() {
     await fetch("/api/auth", {
@@ -163,19 +214,9 @@ export function Header({
         <Logo />
 
         <nav className="ml-4 hidden items-center gap-1 lg:flex">
-          {[
-            { href: "/kampanyalar", label: t("nav.campaigns") },
-            { href: "/online-firsatlar", label: t("nav.online") },
-            { href: "/isletmeler", label: t("nav.businesses") },
-            { href: "/#kategoriler", label: t("nav.categories") },
-            { href: "/#nasil-calisir", label: t("nav.how") },
-            { href: "/#ai-program", label: t("nav.ai28") },
-            { href: "/fiyatlar", label: t("nav.solutions") },
-            { href: "/islem-akisi", label: t("nav.flow") },
-            { href: "/videolar", label: t("nav.videos") },
-          ].map((l) => (
+          {links.map((l) => (
             <Link
-              key={l.href}
+              key={l.label}
               href={l.href}
               className="link-sweep rounded-[3px] px-3 py-2 text-[0.86rem] font-medium text-ink-700 transition-colors hover:text-ink"
             >
@@ -222,22 +263,28 @@ export function Header({
         </div>
       </div>
 
+      {/* Görünüm çubuğu: ana satırın altında ince şerit (tüm genel sayfalarda). */}
+      <div className="border-t border-line-soft bg-canvas/70">
+        <div className="mx-auto flex h-10 max-w-[1280px] items-center gap-3 px-4 sm:px-6">
+          <ModeSwitch
+            mode={mode}
+            search={search}
+            groupLabel={t("mode.label")}
+            labels={{ musteri: t("mode.customer"), isletme: t("mode.business") }}
+          />
+          <p className="min-w-0 truncate text-[0.76rem] text-muted">{t(mode === "isletme" ? "mode.hint.b" : "mode.hint.c")}</p>
+        </div>
+      </div>
+
       {open ? (
         <div className="anim-rise border-t border-line bg-surface px-4 py-3 lg:hidden">
           <nav className="grid gap-1">
             {[
-              { href: "/kampanyalar", label: t("nav.campaigns") },
-              { href: "/online-firsatlar", label: t("nav.online") },
-              { href: "/isletmeler", label: t("nav.businesses") },
-              { href: "/#nasil-calisir", label: t("nav.how") },
-              { href: "/#ai-program", label: t("nav.ai28") },
-              { href: "/fiyatlar", label: t("nav.solutions") },
-              { href: "/islem-akisi", label: t("nav.flow") },
-              { href: "/videolar", label: t("nav.videos") },
+              ...links,
               ...(user ? [{ href: dashHref, label: t("nav.account") }] : [{ href: "/giris", label: t("nav.login") }]),
             ].map((l) => (
               <Link
-                key={l.href}
+                key={l.label}
                 href={l.href}
                 onClick={() => setOpen(false)}
                 className="flex items-center justify-between rounded-[3px] px-3 py-2.5 text-[0.9rem] font-medium text-ink-700 hover:bg-canvas"
@@ -389,6 +436,44 @@ export function MobileTabBar({
   );
 }
 
+type TabItem = { href: string; label: string; icon: ReactNode };
+
+function ModeTabBar({ user, lang, search }: { user: SessionLite; lang: Lang; search: string }) {
+  const t = makeT(lang);
+  const explicit = parseMode(new URLSearchParams(search).get(MODE_PARAM));
+  const mode = resolveViewMode({ param: explicit, role: user?.role });
+  const keep = (href: string) => withMode(href, explicit);
+  const dashHref = user?.role === "ADMIN" ? "/admin" : user?.role === "BUSINESS" ? "/panel" : "/hesabim";
+  const home: TabItem = { href: withMode("/", mode), label: t("nav.campaigns") === "Kampanyalar" ? "Ana sayfa" : "Home", icon: <Icon.store size={17} /> };
+  const account: TabItem = {
+    href: user ? dashHref : "/giris",
+    label: user ? t("nav.account") : t("nav.login"),
+    icon: <Icon.users size={17} />,
+  };
+  const tabs: TabItem[] =
+    mode === "isletme"
+      ? [
+          home,
+          { href: keep("/fiyatlar"), label: t("nav.solutions"), icon: <Icon.megaphone size={17} /> },
+          { href: keep("/kayit?tip=isletme"), label: t("nav.addBusiness"), icon: <Icon.tag size={17} /> },
+          { href: keep("/islem-akisi"), label: t("nav.flow"), icon: <Icon.layers size={17} /> },
+          account,
+        ]
+      : [
+          home,
+          { href: keep("/kampanyalar"), label: t("nav.campaigns"), icon: <Icon.tag size={17} /> },
+          { href: keep("/online-firsatlar"), label: t("nav.online"), icon: <Icon.external size={17} /> },
+          { href: keep("/islem-akisi"), label: t("nav.flow"), icon: <Icon.layers size={17} /> },
+          account,
+        ];
+  return <MobileTabBar items={tabs} />;
+}
+
+function ModeTabBarWithParams(props: { user: SessionLite; lang: Lang }) {
+  const sp = useSearchParams();
+  return <ModeTabBar {...props} search={sp.toString()} />;
+}
+
 export function PublicShell({
   user,
   lang,
@@ -404,23 +489,14 @@ export function PublicShell({
   children: ReactNode;
   footer?: boolean;
 }) {
-  const t = makeT(lang);
-  // Mobilde müşteri deneyimi için alt navigasyon (mağazada telefonla kullanım öncelikli).
-  const dashHref = user?.role === "ADMIN" ? "/admin" : user?.role === "BUSINESS" ? "/panel" : "/hesabim";
-  const tabs = [
-    { href: "/", label: t("nav.campaigns") === "Kampanyalar" ? "Ana sayfa" : "Home", icon: <Icon.store size={17} /> },
-    { href: "/kampanyalar", label: t("nav.campaigns"), icon: <Icon.tag size={17} /> },
-    { href: "/online-firsatlar", label: t("nav.online"), icon: <Icon.external size={17} /> },
-    { href: "/islem-akisi", label: t("nav.flow"), icon: <Icon.layers size={17} /> },
-    { href: user ? dashHref : "/giris", label: user ? t("nav.account") : t("nav.login"), icon: <Icon.users size={17} /> },
-  ];
-
   return (
     <div className="flex min-h-screen flex-col pb-[68px] md:pb-0">
       <Header user={user} lang={lang} currency={currency} country={country} />
       <main className="flex-1">{children}</main>
       {footer ? <Footer lang={lang} currency={currency} country={country} /> : null}
-      <MobileTabBar items={tabs} />
+      <Suspense fallback={<ModeTabBar user={user} lang={lang} search="" />}>
+        <ModeTabBarWithParams user={user} lang={lang} />
+      </Suspense>
     </div>
   );
 }

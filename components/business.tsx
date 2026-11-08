@@ -11,6 +11,8 @@ import { CAMPAIGN_TEMPLATES, applyCampaignTemplate, type CampaignTemplate } from
 import { businessZone, DAY_NAMES, daysUntil, money, num, pct, relative, shortDate, zonedClock, type Currency, type Lang } from "@/lib/money";
 import type { getBusinessData } from "@/lib/queries";
 import { getBrowserSupabase } from "@/lib/supabase/client";
+import OrderQuotaPanel from "@/components/OrderQuotaPanel";
+import { canTakeOrder } from "@/lib/orderQuota";
 
 export type BusinessData = Awaited<ReturnType<typeof getBusinessData>>;
 type NonNull<T> = T extends null ? never : T;
@@ -289,6 +291,7 @@ export default function BusinessDashboard({ data, lang, currency, section, video
     <div>
       <DashSectionHead eyebrow={t("biz.plans")} title="Planlar ve hizmetler" desc="Paket fiyatları yapılandırılabilir; DampingVar hizmet bedelini ayrıca faturalandırır." />
       <Notice tone="info" icon={<Icon.info size={16} />} className="mb-5">Hizmet bedelleri ile müşteriye uygulanan indirimler ayrı alanlardır. DampingVar müşteri ödemesini tahsil etmez.</Notice>
+      {d.orderQuota ? <OrderQuotaPanel quota={d.orderQuota} currency={currency} lang={lang} post={post} /> : null}
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
         {d.packages.map((p) => (
           <Card key={p.code} className={p.code === d.biz.planCode ? "border-accent ring-1 ring-accent/25" : ""}>
@@ -298,6 +301,10 @@ export default function BusinessDashboard({ data, lang, currency, section, video
             </div>
             <p className="tabular mt-2 text-[1.5rem] font-semibold text-ink">{p.priceMonthlyCents === 0 ? "Ücretsiz" : money(p.priceMonthlyCents, currency, lang)}<span className="text-[0.8rem] font-normal text-muted"> / ay</span></p>
             <ul className="mt-4 space-y-2">{p.features.slice(0, 6).map((f) => <li key={f} className="flex gap-2 text-[0.82rem] text-ink-700"><Icon.check size={14} className="mt-0.5 shrink-0 text-positive" />{f}</li>)}</ul>
+            <p className="tabular mt-3 border-t border-line-soft pt-3 text-[0.78rem] leading-relaxed text-muted">
+              {p.orderQuotaMonthly == null ? "Sipariş kotası: sınırsız" : `Sipariş kotası: ${num(p.orderQuotaMonthly, lang)} / ay`}
+              {p.orderQuotaMonthly != null && p.orderUnitPriceCents != null ? ` · ek sipariş ${money(p.orderUnitPriceCents, currency, lang)} (en az ${num(p.orderTopupMinQty, lang)} ve katları)` : ""}
+            </p>
             <Button className="mt-5 w-full" variant={p.code === d.biz.planCode ? "secondary" : "primary"} size="sm" disabled={p.code === d.biz.planCode}
               onClick={() => toast.push({ title: "Talep iletildi", desc: `${p.name} için sözleşme talebin satış ekibine iletildi. Faturalandırma sözleşmeye göre yapılır.`, tone: "positive" })}>
               {p.code === d.biz.planCode ? "Mevcut paketin" : "Paketi seç"}
@@ -1497,6 +1504,12 @@ function OrdersSection({ d, post, lang }: { d: BD; post: (r: string, b: Record<s
 
   return (
     <div>
+      {d.orderQuota && !canTakeOrder(d.orderQuota) ? (
+        <Notice tone="danger" icon={<Icon.alert size={16} />} className="mb-5">
+          Sipariş kotan ve bakiyen bitti; müşteriler şu an yeni sipariş veremiyor.{" "}
+          <a href="/panel?s=plans" className="font-semibold underline">Bakiye ekle</a>
+        </Notice>
+      ) : null}
       <DashSectionHead
         eyebrow="Operasyon"
         title="Siparişler"

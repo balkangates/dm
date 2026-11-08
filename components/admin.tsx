@@ -922,15 +922,22 @@ function Reports({ data, lang, currency }: { data: AdminData; lang: Lang; curren
 function PackageCard({ p, lang, act }: { p: AdminData["packages"][number]; lang: Lang; act: (b: Record<string, unknown>, m: string) => Promise<void> }) {
   const [price, setPrice] = useState(p.priceMonthlyCents / 100);
   const [quota, setQuota] = useState(p.aiQuotaMonthly);
+  // Sipariş kotası: boş = tanımsız (sınırlama yok). Birim fiyat boşsa bakiye eklenemez.
+  const [orderQuota, setOrderQuota] = useState(p.orderQuotaMonthly == null ? "" : String(p.orderQuotaMonthly));
+  const [orderUnit, setOrderUnit] = useState(p.orderUnitPriceCents == null ? "" : String(p.orderUnitPriceCents / 100));
+  const [orderMin, setOrderMin] = useState(p.orderTopupMinQty);
   return (
     <Card>
       <p className="font-display text-[1.02rem] font-bold">{p.name}</p>
       <p className="tabular mt-1 text-[0.76rem] text-muted">{p.code}</p>
       <p className="tabular mt-2 text-[1.35rem] font-semibold">{money(p.priceMonthlyCents, "TRY", lang)}</p>
       <ul className="mt-3 space-y-1.5">{p.features.slice(0, 5).map((f) => <li key={f} className="flex gap-1.5 text-[0.8rem] text-ink-700"><Icon.check size={13} className="mt-0.5 shrink-0 text-positive" />{f}</li>)}</ul>
-      <form className="mt-4 grid gap-3" onSubmit={async (e) => { e.preventDefault(); await act({ action: "package_update", code: p.code, priceMonthlyCents: Math.round(price * 100), aiQuotaMonthly: quota, active: p.active }, "Paket güncellendi"); }}>
+      <form className="mt-4 grid gap-3" onSubmit={async (e) => { e.preventDefault(); await act({ action: "package_update", code: p.code, priceMonthlyCents: Math.round(price * 100), aiQuotaMonthly: quota, orderQuotaMonthly: orderQuota.trim() === "" ? null : Number(orderQuota), orderUnitPriceCents: orderUnit.trim() === "" ? null : Math.round(Number(orderUnit) * 100), orderTopupMinQty: orderMin, active: p.active }, "Paket güncellendi"); }}>
         <Field label="Aylık fiyat (TRY)"><Input type="number" min={0} value={price} onChange={(e) => setPrice(Number(e.target.value))} /></Field>
         <Field label="Aylık AI kotası"><Input type="number" min={0} value={quota} onChange={(e) => setQuota(Number(e.target.value))} /></Field>
+        <Field label="Aylık sipariş kotası (adet)"><Input type="number" min={0} value={orderQuota} placeholder="Boş = sınırsız" onChange={(e) => setOrderQuota(e.target.value)} /></Field>
+        <Field label="Ek sipariş birim fiyatı (TRY)"><Input type="number" min={0} step="0.01" value={orderUnit} placeholder="Boş = bakiye eklenemez" onChange={(e) => setOrderUnit(e.target.value)} /></Field>
+        <Field label="Bakiye en az adet (ve katları)"><Input type="number" min={1} value={orderMin} onChange={(e) => setOrderMin(Math.max(1, Number(e.target.value) || 1))} /></Field>
         <Button type="submit" size="sm" variant="secondary">Kaydet</Button>
       </form>
     </Card>

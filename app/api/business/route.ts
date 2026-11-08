@@ -40,6 +40,8 @@ export async function POST(req: Request) {
     return jsonError(403, "Reklam talebi için yetkiniz yok.");
   if ((action === "product_save" || action === "product_delete") && !staffCan(actor.staffRole, "products.manage"))
     return jsonError(403, "Ürün yönetimi için yetkiniz yok.");
+  if (action === "order_topup" && !staffCan(actor.staffRole, "billing.topup"))
+    return jsonError(403, "Sipariş bakiyesi eklemek için işletme sahibi (OWNER) yetkisi gerekir.");
   if (action === "order_status" && !staffCan(actor.staffRole, "orders.manage"))
     return jsonError(403, "Sipariş durumu için yetkiniz yok.");
 

@@ -240,6 +240,14 @@ export async function POST(req: Request) {
       })
       .select("id, status, total_cents")
       .maybeSingle();
+    // Sipariş kotası: veritabanı tetikleyicisi, dönem kotası + bakiye bittiyse eklemeyi reddeder
+    // (kota, siparişle aynı işlemde düşülür; ret halinde hiçbir şey düşmez).
+    if (error?.message?.includes("ORDER_QUOTA_EXHAUSTED")) {
+      return NextResponse.json(
+        { ok: false, paused: true, quotaExhausted: true, error: `${biz.name} şu an yeni sipariş alamıyor. Lütfen daha sonra tekrar dene.` },
+        { status: 409 },
+      );
+    }
     if (error || !row) {
       return NextResponse.json({ ok: false, error: "Sipariş kaydedilemedi. Lütfen tekrar deneyin." }, { status: 500 });
     }

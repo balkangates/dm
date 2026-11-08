@@ -13,6 +13,7 @@
  */
 import { createClient } from "@/lib/supabase/server";
 import type { BusinessRow, FeeRuleRow, PackageRow } from "./types";
+import { parseOrderQuota } from "@/lib/orderQuota";
 
 type Row = Record<string, unknown>;
 
@@ -223,8 +224,27 @@ export async function listPackagesPublic(): Promise<PackageRow[]> {
     priceMonthlyCents: n(p.price_monthly_cents),
     features: (p.features as string[]) ?? [],
     aiQuotaMonthly: n(p.ai_quota_monthly),
+    orderQuotaMonthly: p.order_quota_monthly == null ? null : n(p.order_quota_monthly),
+    orderUnitPriceCents: p.order_unit_price_cents == null ? null : n(p.order_unit_price_cents),
+    orderTopupMinQty: Math.max(1, n(p.order_topup_min_qty) || 1),
     active: Boolean(p.active),
   }));
+}
+
+/**
+ * İşletme yeni sipariş alabilir mi? (paket kotası veya satın alınmış bakiye var mı)
+ * Herkese açık RPC yalnızca evet/hayır döner; sayı sızdırmaz. RPC yoksa/hata verirse
+ * sipariş akışı KİLİTLENMEZ (true) — kesin sınır veritabanı tetikleyicisindedir.
+ */
+export async function orderCapacityAvailable(businessId: string): Promise<boolean> {
+  try {
+    const client = await sb();
+    const { data, error } = await client.rpc("dv_order_capacity_available", { p_business_id: businessId });
+    if (error) return true;
+    return data !== false;
+  } catch {
+    return true;
+  }
 }
 
 /** Fiyatlandırma sayfası: aktif hizmet bedeli kuralları (herkese açık RLS). */
@@ -586,6 +606,10 @@ export async function getBusinessData(businessId: string, days = 14) {
       client.from("business_media").select("*").eq("business_id", businessId).order("sort_order", { ascending: true }),
     ]);
 
+  // Sipariş kotası durumu (migration yoksa / hata varsa null → panel kartı gizlenir).
+  const quotaRes = await client.rpc("dv_order_quota_state_member", { p_business_id: businessId });
+  const orderQuota = quotaRes.error ? null : parseOrderQuota(quotaRes.data);
+
   const planRow = ((plans.data ?? []) as Row[])[0] ?? null;
   const planDays = planRow
     ? await client.from("marketing_plan_days").select("*").eq("plan_id", str(planRow.id)).order("day", { ascending: true })
@@ -826,12 +850,16 @@ export async function getBusinessData(businessId: string, days = 14) {
           })),
         }
       : null,
+    orderQuota,
     packages: ((pkgs.data ?? []) as Row[]).map((p) => ({
       code: str(p.code),
       name: str(p.name),
       priceMonthlyCents: n(p.price_monthly_cents),
       features: (p.features as string[]) ?? [],
       aiQuotaMonthly: n(p.ai_quota_monthly),
+      orderQuotaMonthly: p.order_quota_monthly == null ? null : n(p.order_quota_monthly),
+      orderUnitPriceCents: p.order_unit_price_cents == null ? null : n(p.order_unit_price_cents),
+      orderTopupMinQty: Math.max(1, n(p.order_topup_min_qty) || 1),
       active: Boolean(p.active),
     })),
     invoices: invRows.map((i) => ({
@@ -1142,6 +1170,9 @@ export async function getAdminData() {
       priceMonthlyCents: n(p.price_monthly_cents),
       features: (p.features as string[]) ?? [],
       aiQuotaMonthly: n(p.ai_quota_monthly),
+      orderQuotaMonthly: p.order_quota_monthly == null ? null : n(p.order_quota_monthly),
+      orderUnitPriceCents: p.order_unit_price_cents == null ? null : n(p.order_unit_price_cents),
+      orderTopupMinQty: Math.max(1, n(p.order_topup_min_qty) || 1),
       active: Boolean(p.active),
     })),
     feeRules: ((feeRules.data ?? []) as Row[]).map((f) => ({

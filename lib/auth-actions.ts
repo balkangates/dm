@@ -37,6 +37,7 @@ export const STAFF_CAN = {
     "staff.manage",
     "orders.manage",
     "products.manage",
+    "billing.topup",
   ],
 } as const;
 

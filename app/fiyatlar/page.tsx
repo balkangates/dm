@@ -4,7 +4,7 @@ import { PublicShell, type SessionLite } from "@/components/Shell";
 import { Badge, Button, Card, Notice, Reveal, SectionHead } from "@/components/ds";
 import { Icon } from "@/components/icons";
 import { listPackagesPublic, listFeeRulesPublic } from "@/lib/queries";
-import { money } from "@/lib/money";
+import { money, num } from "@/lib/money";
 
 export const dynamic = "force-dynamic";
 export const metadata = { title: "İşletme Paketleri", description: "DampingVar işletme paketleri: ücretsiz profil, görünürlük, QR kampanya yönetimi, AI pazarlama ve reklam hizmetleri." };
@@ -20,6 +20,13 @@ export default async function PricingPage() {
       <div className="mx-auto max-w-[1280px] px-4 py-14 sm:px-6">
         <SectionHead eyebrow="İşletmeler için" title="Paketler ve hizmet bedelleri"
           desc="Fiyatlar yapılandırılabilir ve yönetim panelinden güncellenir; koda gömülü değildir. DampingVar yalnızca işletmelere sunduğu hizmetleri faturalandırır." />
+
+        <Notice tone="info" icon={<Icon.shield size={16} />} title="Sipariş kotası nasıl çalışır?" className="mb-4">
+          Her paket yenilendiğinde, müşterilerin işletme sayfasından verdiği her gel-al, paket servis ve rezerve sipariş,
+          paketin tanımlı aylık sipariş kotasından düşer. Ücretsiz Profil de kendi paketine tanımlı aylık ücretsiz sipariş
+          adedi kadar sipariş alır. Kota bittiğinde işletme, paketin tanımlı en az adedi ve katları kadar, tanımlı birim
+          fiyat üzerinden sipariş bakiyesi ekleyerek siparişe devam eder. Diğer paketlerde de aynı şekilde çalışır.
+        </Notice>
 
         <Notice tone="info" icon={<Icon.info size={16} />} className="mb-8">
           Müşteri ödemesi doğrudan işletmeye yapılır. DampingVar cashback, müşteri cüzdanı, ortak puan havuzu veya
@@ -46,9 +53,18 @@ export default async function PricingPage() {
                     </li>
                   ))}
                 </ul>
-                <p className="tabular mt-4 border-t border-line-soft pt-3 text-[0.78rem] text-muted">
-                  AI içerik kotası: {p.aiQuotaMonthly}/ay
-                </p>
+                <div className="tabular mt-4 space-y-1 border-t border-line-soft pt-3 text-[0.78rem] text-muted">
+                  <p>AI içerik kotası: {p.aiQuotaMonthly}/ay</p>
+                  <p>
+                    Sipariş kotası: {p.orderQuotaMonthly == null ? "sınırsız" : `${num(p.orderQuotaMonthly, locale.lang)} sipariş / ay`}
+                  </p>
+                  {p.orderQuotaMonthly != null && p.orderUnitPriceCents != null ? (
+                    <p>
+                      Kota bitince ek sipariş: {money(p.orderUnitPriceCents, locale.currency, locale.lang)} / sipariş
+                      (en az {num(p.orderTopupMinQty, locale.lang)} adet ve katları)
+                    </p>
+                  ) : null}
+                </div>
                 <Button href={p.priceMonthlyCents === 0 ? "/kayit?tip=isletme" : "/panel?s=plans"} className="mt-5 w-full" variant={p.code === "BOOST" ? "primary" : "secondary"}>
                   {p.priceMonthlyCents === 0 ? "Ücretsiz başla" : "Paketi seç"}
                 </Button>

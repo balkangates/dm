@@ -105,6 +105,12 @@ export type PackageRow = {
   priceMonthlyCents: number;
   features: string[];
   aiQuotaMonthly: number;
+  /** Paket yenilenince tanımlı aylık sipariş kotası. null = tanımsız (sınırsız). */
+  orderQuotaMonthly: number | null;
+  /** Kota bitince eklenen sipariş bakiyesinin birim fiyatı (kuruş). null = bakiye eklenemez. */
+  orderUnitPriceCents: number | null;
+  /** Bakiye ekleme: en az bu adet ve katları. */
+  orderTopupMinQty: number;
   active: boolean;
 };
 

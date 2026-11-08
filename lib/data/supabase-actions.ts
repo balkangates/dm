@@ -29,6 +29,14 @@ export class ActionError extends Error {
 }
 
 /** Supabase-js hatasını ActionError'a çevirir (mesaj RPC/RLS'ten gelir). */
+/** Boş / null / geçersiz → null; aksi halde [min,max] aralığına sıkıştırılmış tam sayı. */
+function nullableInt(v: unknown, min: number, max: number): number | null {
+  if (v === null || v === undefined || v === "") return null;
+  const x = Math.trunc(Number(v));
+  if (!Number.isFinite(x)) return null;
+  return Math.min(max, Math.max(min, x));
+}
+
 function fail(error: { message: string } | null, fallback = "İşlem tamamlanamadı."): never {
   throw new ActionError(400, error?.message || fallback);
 }
@@ -898,6 +906,21 @@ export async function businessAction(actor: BusinessActorLite, body: Row) {
     return Response.json({ ok: true, settings: cam(updated as Row) });
   }
 
+  /* Sipariş bakiyesi ekleme (yalnız OWNER). Adet, paketin minimum adedi ve katları olmalıdır;
+   * tutar = adet × paket birim fiyatı (hizmet bedeli; faturalanacak satır olarak deftere yazılır).
+   * Doğrulama ve bakiye artışı veritabanı RPC'sinde atomik yapılır; adet burada da ön-kontrol edilir. */
+  if (action === "order_topup") {
+    const qty = Math.trunc(Number(body.qty));
+    if (!Number.isFinite(qty) || qty < 1) throw new ActionError(400, "Geçerli bir adet girin.");
+    const { data, error } = await client.rpc("dv_topup_order_credits", { p_business_id: actor.businessId, p_qty: qty });
+    if (error) fail(error);
+    const r = (data ?? {}) as Row;
+    await logAudit(actor.email, actor.staffRole, "ORDER_CREDIT_TOPUP", "businesses", actor.businessId, {
+      qty, amountCents: r.amountCents, unitPriceCents: r.unitPriceCents,
+    });
+    return Response.json({ ok: true, topup: r });
+  }
+
   /* FAZ 12B — Ürün CRUD (MANAGER/OWNER). İki fiyat: işletme içi (gel-al/rezervasyon)
    * = price_cents, adrese teslim (paket servis) = delivery_price_cents (boşsa aynı fiyat). */
   if (action === "product_save") {
@@ -1198,6 +1221,10 @@ export async function adminAction(user: SessionUserLite, body: Row) {
         .update({
           price_monthly_cents: clampInt(body.priceMonthlyCents, 0, 100_000_000),
           ai_quota_monthly: clampInt(body.aiQuotaMonthly, 0, 100_000),
+          // Sipariş kotası: boş/null = tanımsız (sınırlama yok). Birim fiyat boşsa bakiye eklenemez.
+          order_quota_monthly: nullableInt(body.orderQuotaMonthly, 0, 10_000_000),
+          order_unit_price_cents: nullableInt(body.orderUnitPriceCents, 0, 100_000_000),
+          order_topup_min_qty: Math.max(1, clampInt(body.orderTopupMinQty ?? 1, 1, 1_000_000)),
           active: body.active === undefined ? true : body.active === true,
         })
         .eq("code", code)

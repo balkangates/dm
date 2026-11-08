@@ -8,7 +8,7 @@ import { Badge, Button, Card, Notice, SectionHead } from "@/components/ds";
 import { Icon } from "@/components/icons";
 import { CampaignCardView } from "@/components/discovery";
 import VoiceAssistant from "@/components/voice";
-import { ensureSeeded, getBusinessBySlug, trackEvent } from "@/lib/queries";
+import { ensureSeeded, getBusinessBySlug, orderCapacityAvailable, trackEvent } from "@/lib/queries";
 import { businessZone, DAY_NAMES, isOpenNow, money, todayHours, type Currency } from "@/lib/money";
 
 export const dynamic = "force-dynamic";
@@ -37,6 +37,8 @@ export default async function BusinessPage({ params }: P) {
   await trackEvent("business_view", { businessId: d.biz.id, userId: user?.id ?? null, meta: { slug } });
 
   const b = d.biz;
+  // Paket sipariş kotası + bakiye bittiyse sipariş akışı "şu an sipariş almıyor" durumuna geçer.
+  const hasOrderCapacity = await orderCapacityAvailable(b.id);
   const cur = (b.currency ?? "TRY") as Currency;
   // Açık/kapalı ve "bugün" İŞLETMENİN saat diliminde hesaplanır (sunucu saati değil).
   const tz = businessZone(b.country);
@@ -213,7 +215,7 @@ export default async function BusinessPage({ params }: P) {
           district: b.district,
           // FAZ 12C — açık sipariş modları + sipariş alım durumu + KDV varsayılanı.
           modes: { gelAl: b.modeGelAl, rezerve: b.modeRezerve, paketServis: b.modePaketServis },
-          acceptingOrders: b.acceptingOrders,
+          acceptingOrders: b.acceptingOrders && hasOrderCapacity,
           kdvRate: b.kdvRate,
           // Çalışma saatleri dışında gel-al / paket servis kapanır; yalnız rezerve kalır.
           openNow: open,

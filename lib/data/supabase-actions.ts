@@ -10,6 +10,8 @@
 import { createClient } from "@/lib/supabase/server";
 import { trackEvent, logAudit } from "@/lib/queries";
 import { slugify } from "@/lib/money";
+import { randomBytes } from "node:crypto";
+import { buildOutboundUrl, slugifyTr, validateNetworkInput, validateOfferInput } from "@/lib/affiliate";
 import { getSessionUser, type BusinessActorLite, type SessionUserLite } from "@/lib/authz";
 import { generateAdVariants, generateSocial, generateStory, generateVideoScript, type BusinessSnapshot } from "@/lib/ai";
 import { growthAlternative, growthTaskTemplate, type ExistingRec, type GrowthExtras, type GrowthPlan } from "@/lib/growth";
@@ -1398,13 +1400,22 @@ export async function affiliateClick(user: SessionUserLite | null, offerId: stri
   const client = await sb();
   const { data: offer } = await client.from("affiliate_offers").select("*").eq("id", offerId).limit(1).maybeSingle();
   if (!offer) throw new ActionError(404, "Fırsat bulunamadı.");
+  if (str(offer.status) !== "ACTIVE") throw new ActionError(409, "Bu fırsat şu an aktif değil.");
+  if (offer.ends_at && new Date(String(offer.ends_at)) < new Date()) throw new ActionError(409, "Bu fırsatın süresi dolmuş.");
 
-  const clickId = `dv-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+  // Ağın tıklama parametresi (fırsatta yoksa varsayılan olarak kullanılır).
+  let networkClickParam: string | null = null;
+  if (offer.network_id) {
+    const { data: net } = await client.from("affiliate_networks").select("click_param").eq("id", String(offer.network_id)).maybeSingle();
+    networkClickParam = net ? str((net as Row).click_param) || null : null;
+  }
+
+  const clickId = `dv-${Date.now().toString(36)}-${randomBytes(4).toString("hex")}`;
   const { error } = await client.from("affiliate_clicks").insert({
     offer_id: offerId,
     user_id: user?.id ?? null,
     click_id: clickId,
-    channel,
+    channel: String(channel).slice(0, 24),
     confirmed_outbound: false,
   });
   if (error) fail(error);
@@ -1414,10 +1425,21 @@ export async function affiliateClick(user: SessionUserLite | null, offerId: stri
     meta: { offerId, clickId, merchant: offer.merchant },
   });
 
+  // Çıkış bağlantısı SUNUCUDA üretilir (referral şablonu + click_id).
+  const outbound = buildOutboundUrl({
+    destinationUrl: str(offer.destination_url),
+    trackingUrl: offer.tracking_url ? str(offer.tracking_url) : null,
+    clickParam: offer.click_param ? str(offer.click_param) : null,
+    networkClickParam,
+    clickId,
+    userId: user?.id ?? null,
+    offerId,
+  });
+
   return Response.json({
     ok: true,
     clickId,
-    destinationUrl: offer.destination_url,
+    destinationUrl: outbound,
     merchant: offer.merchant,
     disclosure: offer.disclosure,
     notice:
@@ -1477,11 +1499,11 @@ export async function affiliateAdminAction(user: SessionUserLite, body: Row) {
 
   if (action === "conversion-status") {
     const status = String(body.status ?? "");
-    if (!["PENDING", "APPROVED", "REJECTED", "REVERSED", "PAID"].includes(status))
+    if (!["REPORTED", "PENDING", "APPROVED", "REJECTED", "REVERSED", "PAID"].includes(status))
       throw new ActionError(400, "Geçersiz komisyon durumu.");
     const patch: Row = {
       status,
-      decided_at: status === "PENDING" ? null : new Date().toISOString(),
+      decided_at: status === "PENDING" || status === "REPORTED" ? null : new Date().toISOString(),
       paid_at: status === "PAID" ? new Date().toISOString() : null,
     };
     if (body.note) patch.note = String(body.note).slice(0, 400);
@@ -1530,6 +1552,131 @@ export async function affiliateAdminAction(user: SessionUserLite, body: Row) {
     if (!row) throw new ActionError(404, "Fırsat bulunamadı.");
     await logAudit(user.email, "ADMIN", `AFFILIATE_OFFER_${status}`, "affiliate_offers", row.id, {});
     return Response.json({ ok: true, offer: cam(row as Row) });
+  }
+
+  /* ------------------------ fırsat oluştur / güncelle ------------------------ */
+  if (action === "offer-save") {
+    const parsed = validateOfferInput(body);
+    if (!parsed.ok) throw new ActionError(400, parsed.error);
+    const v = parsed.value;
+    const id = body.id ? String(body.id) : "";
+
+    if (v.networkId) {
+      const { data: net } = await client.from("affiliate_networks").select("id").eq("id", v.networkId).maybeSingle();
+      if (!net) throw new ActionError(400, "Seçilen ağ/marka bulunamadı.");
+    }
+
+    const patch: Row = {
+      merchant: v.merchant,
+      brand: v.brand,
+      title: v.title,
+      description: v.description,
+      image_url: v.imageUrl,
+      video_url: v.videoUrl,
+      category: v.category,
+      country: v.country,
+      network_id: v.networkId,
+      integration_type: v.integrationType,
+      destination_url: v.destinationUrl,
+      tracking_url: v.trackingUrl,
+      click_param: v.clickParam,
+      currency: v.currency,
+      price_cents: v.priceCents,
+      price_verified: v.priceVerified,
+      commission_terms: v.commissionTerms,
+      commission_rate_percent: v.commissionRatePercent,
+      commission_fixed_cents: v.commissionFixedCents,
+      cookie_days: v.cookieDays,
+      disclosure: v.disclosure,
+      terms: v.terms,
+      exclusions: v.exclusions,
+      starts_at: v.startsAt,
+      ends_at: v.endsAt,
+      is_sponsored: v.isSponsored,
+      status: v.status,
+      is_sample: false, // admin tanımlı kayıt = gerçek mod
+      last_updated: new Date().toISOString(),
+    };
+
+    if (id) {
+      const { data: row, error } = await client.from("affiliate_offers").update(patch).eq("id", id).select("*").maybeSingle();
+      if (error) fail(error);
+      if (!row) throw new ActionError(404, "Fırsat bulunamadı.");
+      await logAudit(user.email, "ADMIN", "AFFILIATE_OFFER_UPDATED", "affiliate_offers", id, { merchant: v.merchant, integration: v.integrationType });
+      return Response.json({ ok: true, offer: cam(row as Row) });
+    }
+
+    const baseSlug = slugifyTr(`${v.merchant}-${v.title}`) || "firsat";
+    for (let attempt = 0; attempt < 4; attempt++) {
+      const slug = attempt === 0 ? baseSlug : `${baseSlug}-${randomBytes(2).toString("hex")}`;
+      const { data: row, error } = await client.from("affiliate_offers").insert({ ...patch, slug }).select("*").maybeSingle();
+      if (!error && row) {
+        await logAudit(user.email, "ADMIN", "AFFILIATE_OFFER_CREATED", "affiliate_offers", str(row.id), { merchant: v.merchant, integration: v.integrationType });
+        return Response.json({ ok: true, offer: cam(row as Row) });
+      }
+      if (error && !/duplicate|unique|23505/i.test(error.message)) fail(error);
+    }
+    throw new ActionError(409, "Benzersiz bağlantı adı üretilemedi; başlığı değiştirip tekrar deneyin.");
+  }
+
+  /* ------------------------------ fırsat sil -------------------------------- */
+  if (action === "offer-delete") {
+    const id = String(body.id ?? "");
+    const [{ count: clickCount }, { count: convCount }] = await Promise.all([
+      client.from("affiliate_clicks").select("id", { count: "exact", head: true }).eq("offer_id", id),
+      client.from("affiliate_conversions").select("id", { count: "exact", head: true }).eq("offer_id", id),
+    ]);
+    if ((clickCount ?? 0) > 0 || (convCount ?? 0) > 0) {
+      throw new ActionError(409, "Bu fırsatın tıklama/dönüşüm kaydı var; geçmiş korunur. Silmek yerine 'Süresi doldu' yapın.");
+    }
+    const { error } = await client.from("affiliate_offers").delete().eq("id", id);
+    if (error) fail(error);
+    await logAudit(user.email, "ADMIN", "AFFILIATE_OFFER_DELETED", "affiliate_offers", id, {});
+    return Response.json({ ok: true });
+  }
+
+  /* --------------------------- ağ / marka oluştur --------------------------- */
+  if (action === "network-save") {
+    const parsed = validateNetworkInput(body);
+    if (!parsed.ok) throw new ActionError(400, parsed.error);
+    const v = parsed.value;
+    const patch: Row = {
+      name: v.name,
+      kind: v.kind,
+      reporting_method: v.reportingMethod,
+      commission_model: v.commissionModel,
+      base_url: v.baseUrl,
+      click_param: v.clickParam,
+      default_cookie_days: v.defaultCookieDays,
+      notes: v.notes,
+    };
+    const id = body.id ? String(body.id) : "";
+    if (id) {
+      const { data: row, error } = await client.from("affiliate_networks").update(patch).eq("id", id).select("*").maybeSingle();
+      if (error) fail(error);
+      if (!row) throw new ActionError(404, "Ağ bulunamadı.");
+      await logAudit(user.email, "ADMIN", "AFFILIATE_NETWORK_UPDATED", "affiliate_networks", id, {});
+      return Response.json({ ok: true, network: cam(row as Row) });
+    }
+    const { data: row, error } = await client.from("affiliate_networks").insert(patch).select("*").maybeSingle();
+    if (error || !row) fail(error);
+    await logAudit(user.email, "ADMIN", "AFFILIATE_NETWORK_CREATED", "affiliate_networks", str(row.id), { name: v.name });
+    return Response.json({ ok: true, network: cam(row as Row) });
+  }
+
+  /* ----------------- postback token üret / yenile (yalnız admin) ------------- */
+  if (action === "network-token") {
+    const id = String(body.id ?? "");
+    const { data: net } = await client.from("affiliate_networks").select("id").eq("id", id).maybeSingle();
+    if (!net) throw new ActionError(404, "Ağ bulunamadı.");
+    const token = randomBytes(24).toString("hex");
+    const { error } = await client
+      .from("affiliate_network_secrets")
+      .upsert({ network_id: id, postback_token: token, rotated_at: new Date().toISOString() }, { onConflict: "network_id" });
+    if (error) fail(error);
+    await logAudit(user.email, "ADMIN", "AFFILIATE_NETWORK_TOKEN_ROTATED", "affiliate_networks", id, {});
+    // Token yalnızca bu yanıtta gösterilir; veritabanından okunabilir (yalnız admin RLS).
+    return Response.json({ ok: true, token });
   }
 
   throw new ActionError(400, "Bilinmeyen işlem.");

@@ -95,6 +95,14 @@ export type OfferCard = {
   startsAt: string | null; endsAt: string | null; lastUpdated: string | null;
   status: string; isSponsored: boolean; isSample: boolean; clicks: number; impressions: number;
   networkName: string | null; networkStatus: string | null;
+  brand: string; videoUrl: string | null; integrationType: string;
+  commissionRatePercent: number | null; cookieDays: number | null;
+};
+
+/** Online fırsatlar mega menüsü: kategori → markalar. */
+export type OfferMenu = {
+  categories: { category: string; n: number; brands: { brand: string; n: number }[] }[];
+  featured: { slug: string; title: string; brand: string }[];
 };
 
 /** Fiyatlandırma sayfası: paket satırları (camelCase). */

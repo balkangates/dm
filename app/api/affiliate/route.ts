@@ -1,6 +1,6 @@
 import { jsonError } from "@/lib/auth-actions";
 import { getSessionUser } from "@/lib/authz";
-import { getAffiliateData } from "@/lib/queries";
+import { getAffiliateData, getOfferMenu } from "@/lib/queries";
 import {
   ActionError,
   affiliateActiveCount,
@@ -33,7 +33,10 @@ export async function POST(req: Request) {
     }
     if (action === "confirm-outbound") return await affiliateConfirmOutbound(user, String(body.clickId ?? ""));
     // Aşağıdaki işlemler yalnızca yöneticidir.
-    if (["report-conversion", "conversion-status", "network-status", "offer-status"].includes(action)) {
+    if ([
+      "report-conversion", "conversion-status", "network-status", "offer-status",
+      "offer-save", "offer-delete", "network-save", "network-token",
+    ].includes(action)) {
       if (!user || user.role !== "ADMIN") return jsonError(403, "Bu işlem yalnızca platform yöneticileri içindir.");
       return await affiliateAdminAction(user, body as Record<string, unknown>);
     }
@@ -46,6 +49,11 @@ export async function POST(req: Request) {
 
 export async function GET(req: Request) {
   const url = new URL(req.url);
+  // Herkese açık: "Online Fırsatlar" mega menüsü (kategori → marka). Kısa süreli önbellek.
+  if (url.searchParams.get("scope") === "menu") {
+    const menu = await getOfferMenu();
+    return Response.json({ ok: true, menu }, { headers: { "cache-control": "public, s-maxage=60, stale-while-revalidate=300" } });
+  }
   if (url.searchParams.get("scope") === "admin") {
     const user = await getSessionUser();
     if (!user || user.role !== "ADMIN") return jsonError(403, "Yönetici erişimi gerekli.");

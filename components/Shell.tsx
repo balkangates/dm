@@ -7,6 +7,7 @@ import { Avatar, Badge, Button, Icon, Logo } from "@/components/ds";
 import { COUNTRIES, LANGS, makeT } from "@/lib/i18n";
 import { CURRENCIES, type Currency, type Lang } from "@/lib/money";
 import { ModeSwitch } from "@/components/ModeSwitch";
+import { OnlineMegaMenu } from "@/components/OnlineMegaMenu";
 import { MODE_PARAM, parseMode, resolveViewMode, withMode, type ViewMode } from "@/lib/viewMode";
 
 export type SessionLite = {
@@ -214,15 +215,19 @@ function HeaderView({ user, lang, currency, country, search }: HeaderProps & { s
         <Logo />
 
         <nav className="ml-4 hidden items-center gap-1 lg:flex">
-          {links.map((l) => (
-            <Link
-              key={l.label}
-              href={l.href}
-              className="link-sweep rounded-[3px] px-3 py-2 text-[0.86rem] font-medium text-ink-700 transition-colors hover:text-ink"
-            >
-              {l.label}
-            </Link>
-          ))}
+          {links.map((l) =>
+            mode !== "isletme" && l.href.startsWith("/online-firsatlar") ? (
+              <OnlineMegaMenu key={l.label} href={l.href} label={l.label} explicit={explicit} />
+            ) : (
+              <Link
+                key={l.label}
+                href={l.href}
+                className="link-sweep rounded-[3px] px-3 py-2 text-[0.86rem] font-medium text-ink-700 transition-colors hover:text-ink"
+              >
+                {l.label}
+              </Link>
+            ),
+          )}
         </nav>
 
         <div className="ml-auto flex items-center gap-2">

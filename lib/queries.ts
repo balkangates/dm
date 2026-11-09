@@ -6,4 +6,4 @@
  * 30+ içe aktarıcıyı bozmadan aynı imzaları yeniden dışa aktarır.
  */
 export * from "@/lib/data/supabase";
-export type { BusinessRow, CampaignCard, FeeRuleRow, OfferCard, PackageRow } from "@/lib/data/types";
+export type { BusinessRow, CampaignCard, FeeRuleRow, OfferCard, OfferMenu, PackageRow } from "@/lib/data/types";

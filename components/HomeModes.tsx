@@ -158,13 +158,20 @@ export function CustomerHome({
             </Button>
           }
         />
-        <div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-3">
-          {offers.map((o, i) => (
-            <Reveal key={o.id} delay={i * 50}>
-              <OfferCardView o={o} lang={lang} />
-            </Reveal>
-          ))}
-        </div>
+        {offers.length === 0 ? (
+          <Card>
+            <p className="font-display text-[1.05rem] font-bold">Şu an yayında online fırsat yok</p>
+            <p className="mt-1.5 text-[0.88rem] leading-relaxed text-muted">Marka teklifleri eklendiğinde burada listelenir.</p>
+          </Card>
+        ) : (
+          <div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-3">
+            {offers.map((o, i) => (
+              <Reveal key={o.id} delay={i * 50}>
+                <OfferCardView o={o} lang={lang} />
+              </Reveal>
+            ))}
+          </div>
+        )}
         <p className="mt-4 flex items-start gap-2 text-[0.8rem] leading-relaxed text-muted">
           <Icon.info size={14} className="mt-0.5 shrink-0" />
           Bu bağlantı üzerinden gerçekleşen uygun alışverişlerden DampingVar komisyon kazanabilir. Bağlantıya
@@ -227,7 +234,7 @@ export function CustomerHome({
         <SectionHead
           eyebrow="Öne çıkan markalar"
           title="Online teklifleri olan markalar"
-          desc="Marka sayfaları izlenen bağlantıyla satıcının kendi sitesine gider. Tüm içerik örnek/demo olarak etiketlidir."
+          desc="Marka sayfası, o markanın tüm online tekliflerini listeler. Teklifler izlenen bağlantıyla satıcının kendi sitesine gider."
           action={
             <Button href="/online-firsatlar" variant="secondary" size="sm" iconRight={<Icon.arrowRight size={14} />}>
               Marka teklifleri
@@ -237,7 +244,7 @@ export function CustomerHome({
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {brands.map((b, i) => (
             <Reveal key={b.merchant} delay={i * 45}>
-              <Link href={`/firsat/${b.slug}`} className="card hover-lift group flex items-center gap-4 p-4">
+              <Link href={`/online-firsatlar?marka=${encodeURIComponent(b.merchant)}`} className="card hover-lift group flex items-center gap-4 p-4">
                 <span className="flex h-12 w-12 shrink-0 items-center justify-center border-2 border-ink bg-canvas font-display text-[0.82rem] font-extrabold text-ink">
                   {b.merchant.slice(0, 2).toLocaleUpperCase("tr-TR")}
                 </span>
@@ -250,10 +257,9 @@ export function CustomerHome({
             </Reveal>
           ))}
         </div>
-        <p className="mt-3 text-[0.78rem] text-muted">
-          Affiliate ağ bağlantısı kurulmadığı için komisyon koşulları uydurulmaz; yalnızca ağ tarafından sağlanan
-          bilgiler gösterilir.
-        </p>
+        {offers.some((o) => o.isSample) ? (
+          <p className="mt-3 text-[0.78rem] text-muted">“örnek” etiketli teklifler demo içeriktir; gerçek bir markanın aktif kampanyası değildir.</p>
+        ) : null}
       </section>
 
       {/* ------------------------- YENİ İŞLETME KAMPANYALARI ------------------ */}

@@ -9,7 +9,8 @@ import {
 } from "@/components/ds";
 import { Icon } from "@/components/icons";
 import { OfferCardView, OutboundCta } from "@/components/offers";
-import { ensureSeeded, getOfferBySlug, trackEvent } from "@/lib/queries";
+import { bumpOfferImpressions, ensureSeeded, getOfferBySlug, trackEvent } from "@/lib/queries";
+import { videoEmbed } from "@/lib/affiliate";
 import { daysUntil, money, relative, shortDate, type Currency } from "@/lib/money";
 
 export const dynamic = "force-dynamic";
@@ -32,7 +33,10 @@ export default async function OfferDetail({ params }: P) {
   const d = await getOfferBySlug(slug);
   if (!d) notFound();
   const [user, locale] = await Promise.all([currentUser(), getLocale()]);
-  await trackEvent("affiliate_impression", { userId: user?.id ?? null, meta: { offerId: d.offer.id } });
+  await Promise.all([
+    trackEvent("affiliate_impression", { userId: user?.id ?? null, meta: { offerId: d.offer.id } }),
+    bumpOfferImpressions([d.offer.id]),
+  ]);
 
   const o = d.offer;
   const cur = o.currency as Currency;
@@ -42,6 +46,7 @@ export default async function OfferDetail({ params }: P) {
     : null;
 
   const networkConnected = o.networkStatus === "CONNECTED";
+  const video = videoEmbed(o.videoUrl);
 
   return (
     <PublicShell user={session} lang={locale.lang} currency={locale.currency} country={locale.country}>
@@ -74,6 +79,30 @@ export default async function OfferDetail({ params }: P) {
 
               <div className="p-6">
                 <p className="max-w-[78ch] text-[1rem] leading-relaxed text-ink-500">{o.description}</p>
+
+                {o.videoUrl ? (
+                  <div className="mt-6">
+                    {video?.kind === "iframe" ? (
+                      <div className="aspect-video w-full overflow-hidden border-2 border-line bg-ink">
+                        <iframe
+                          src={video.src}
+                          title={`${o.merchant} — ${o.title} videosu`}
+                          loading="lazy"
+                          allow="encrypted-media; picture-in-picture; fullscreen"
+                          referrerPolicy="strict-origin-when-cross-origin"
+                          allowFullScreen
+                          className="h-full w-full"
+                        />
+                      </div>
+                    ) : video?.kind === "file" ? (
+                      <video src={video.src} controls preload="metadata" className="aspect-video w-full border-2 border-line bg-ink" />
+                    ) : (
+                      <a href={o.videoUrl} target="_blank" rel="noopener noreferrer" className="link-sweep inline-flex items-center gap-2 text-accent">
+                        <Icon.play size={14} /> Tanıtım videosunu aç
+                      </a>
+                    )}
+                  </div>
+                ) : null}
 
                 <div className="mt-6 grid gap-px overflow-hidden border-2 border-line bg-line sm:grid-cols-3">
                   {[
@@ -153,11 +182,11 @@ export default async function OfferDetail({ params }: P) {
                 <KeyValue
                   rows={[
                     ["Satıcı", o.merchant],
+                    ["Marka", o.brand],
                     ["Kategori", o.category],
                     ["Ülke", o.country],
                     ["Fiyat", o.priceVerified && o.priceCents != null ? money(o.priceCents, cur, locale.lang) : "satıcıda"],
                     ["Son güncelleme", o.lastUpdated ? relative(o.lastUpdated, locale.lang) : "—"],
-                    ["Ağ", `${o.networkName ?? "—"} · ${o.networkStatus ?? "NOT_CONNECTED"}`],
                   ]}
                 />
                 <div className="dashed-rule my-4" />
@@ -188,7 +217,7 @@ export default async function OfferDetail({ params }: P) {
                 </Button>
               </div>
 
-              {!networkConnected ? (
+              {o.isSample && !networkConnected ? (
                 <Card className="mt-5 border-warning/50 bg-warning-soft/40">
                   <p className="flex items-center gap-2 text-[0.72rem] font-bold uppercase tracking-[0.14em] text-warning">
                     <Icon.alert size={14} /> Ağ bağlantısı kurulmadı

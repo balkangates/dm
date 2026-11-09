@@ -10,6 +10,11 @@ import { money, num, pct, shortDate, type Currency, type Lang } from "@/lib/mone
 import type { getAdminData } from "@/lib/queries";
 import { getBrowserSupabase } from "@/lib/supabase/client";
 import { BalancesView, InvoicesView, StatementView } from "@/components/AdminBilling";
+import {
+  ManualConversionDialog, NetworkDialog, OfferDialog, PostbackDialog, useAffiliateApi,
+  type AffNetwork, type AffOffer,
+} from "@/components/affiliateAdmin";
+import { INTEGRATION_LABEL, type IntegrationType } from "@/lib/affiliate";
 
 export type AdminData = Awaited<ReturnType<typeof getAdminData>>;
 
@@ -392,9 +397,15 @@ export default function AdminDashboard({ data, lang, currency, section, affiliat
   const [page, setPage] = useState(1);
   // FAZ 12D — açık medya yöneticisi (İşletmeler bölümü).
   const [mediaBiz, setMediaBiz] = useState<null | { id: string; name: string }>(null);
+  // Affiliate yönetimi: fırsat/ağ formları, postback paneli, manuel komisyon.
+  const affCall = useAffiliateApi();
+  const [offerDlg, setOfferDlg] = useState<null | { offer: AffOffer | null }>(null);
+  const [netDlg, setNetDlg] = useState<null | { network: AffNetwork | null }>(null);
+  const [pbNet, setPbNet] = useState<AffNetwork | null>(null);
+  const [manualOpen, setManualOpen] = useState(false);
   // Onay diyaloğu section değişiminde kapanır (aksi halde yeni bölümde
   // Askıdan/Geri al'ın üzerine biniyordu).
-  useEffect(() => { setConfirm(null); setMediaBiz(null); }, [section]);
+  useEffect(() => { setConfirm(null); setMediaBiz(null); setOfferDlg(null); setNetDlg(null); setPbNet(null); setManualOpen(false); }, [section]);
   const c = data.counts;
 
   async function act(body: Record<string, unknown>, ok: string) {
@@ -662,47 +673,88 @@ export default function AdminDashboard({ data, lang, currency, section, affiliat
 
   if (section === "settings") return <PkgSettings data={data} lang={lang} act={act} />;
 
-  if (section === "affiliateOffers") return <Wrap title="Affiliate fırsatları" desc="Örnek içerik etiketi, ağ bağlantı durumu ve etkinlik. Komisyon koşulları ağ tarafından sağlanmadıysa boş bırakılır.">
-    <Notice tone="warning" icon={<Icon.alert size={16} />} className="mb-5">
-      Hiçbir ağ <strong>CONNECTED</strong> değilken canlı dönüşüm verisi çekilemez. Bu ekrandaki kayıtlar demo/örnek
-      olarak işaretlidir; gerçek bir markanın aktif teklifi değildir.
-    </Notice>
-    <Table><thead><tr><Th>Fırsat</Th><Th>Satıcı</Th><Th>Kategori</Th><Th>Ağ</Th><Th>Gösterim</Th><Th>Tıklama</Th><Th>Dönüşüm</Th><Th>Durum</Th><Th right>İşlem</Th></tr></thead>
-      <tbody>{affiliate.offers.map((o) => (<tr key={o.id}>
-        <Td strong><a className="link-sweep text-accent" href={`/firsat/${o.slug}`}>{o.title}</a>{o.isSample ? <span className="ml-2"><Badge tone="warning">örnek</Badge></span> : null}</Td>
-        <Td>{o.merchant}</Td><Td>{o.category} · {o.country}</Td>
-        <Td>{o.networkName} <Badge tone={o.networkStatus === "CONNECTED" ? "positive" : "warning"}>{o.networkStatus}</Badge></Td>
-        <Td right>{num(o.impressions, lang)}</Td><Td right>{num(o.clicks, lang)}</Td><Td right>{o.conversions}</Td>
-        <Td><StatusBadge status={o.status} lang={lang} /></Td>
-        <Td right><span className="inline-flex gap-1.5">
-          <Button size="sm" variant="secondary" onClick={() => void act({ action: "offer-status", id: o.id, status: o.status === "ACTIVE" ? "PAUSED" : "ACTIVE" }, "Fırsat durumu güncellendi")}>{o.status === "ACTIVE" ? "Duraklat" : "Aktifleştir"}</Button>
-        </span></Td></tr>))}</tbody></Table>
-  </Wrap>;
+  if (section === "affiliateOffers") {
+    const cats = Array.from(new Set(affiliate.offers.map((o) => o.category)));
+    const hasSample = affiliate.offers.some((o) => o.isSample);
+    return <Wrap title="Affiliate fırsatları"
+      desc="Referral/entegrasyon bağlantısını siz tanımlarsınız. Aktif fırsatlar anasayfada ve Online Fırsatlar menüsünde görünür."
+      action={<Button icon={<Icon.plus size={15} />} onClick={() => setOfferDlg({ offer: null })}>Yeni affiliate fırsatı</Button>}>
+      {affiliate.networks.length === 0 ? (
+        <Notice tone="warning" icon={<Icon.alert size={16} />} className="mb-5">
+          Henüz ağ/marka entegrasyonu yok. Komisyon raporu alabilmek için önce <strong>Affiliate Ağ Durumu</strong> bölümünden bir ağ (iadeal benzeri platform) veya doğrudan marka ekleyin.
+        </Notice>
+      ) : null}
+      {hasSample ? (
+        <Notice tone="warning" icon={<Icon.alert size={16} />} className="mb-5">
+          “örnek” etiketli kayıtlar demo içeriktir; gerçek bir markanın aktif teklifi değildir. Gerçek fırsatı eklediğinizde bu kayıtları “Süresi doldu” yapın veya silin.
+        </Notice>
+      ) : null}
+      {affiliate.offers.length === 0 ? (
+        <EmptyState icon={<Icon.external size={22} />} title="Henüz affiliate fırsatı yok" desc="“Yeni affiliate fırsatı” ile ilk marka teklifini ve referral bağlantısını tanımlayın."
+          action={<Button onClick={() => setOfferDlg({ offer: null })} icon={<Icon.plus size={15} />}>Yeni affiliate fırsatı</Button>} />
+      ) : (
+        <Table className="[&_table]:min-w-[1120px]">
+          <thead><tr><Th>Görsel</Th><Th>Video</Th><Th>Fırsat</Th><Th>Satıcı / Marka</Th><Th>Kategori</Th><Th>Ağ / Entegrasyon</Th><Th right>Gösterim</Th><Th right>Tıklama</Th><Th right>Dönüşüm</Th><Th>Durum</Th><Th right>İşlem</Th></tr></thead>
+          <tbody>{affiliate.offers.map((o) => (<tr key={o.id}>
+            <Td>{o.imageUrl ? <img src={o.imageUrl} alt="" className="h-12 w-16 rounded-[3px] border border-line object-cover" /> : <span className="flex h-12 w-16 items-center justify-center rounded-[3px] border-2 border-dashed border-line text-muted-2"><Icon.image size={16} /></span>}</Td>
+            <Td>{o.videoUrl ? <a href={o.videoUrl} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-accent" aria-label="Videoyu aç"><Icon.play size={14} /> var</a> : <span className="text-muted-2">—</span>}</Td>
+            <Td strong><a className="link-sweep text-accent" href={`/firsat/${o.slug}`}>{o.title}</a>{o.isSample ? <span className="ml-2"><Badge tone="warning">örnek</Badge></span> : null}{o.isSponsored ? <span className="ml-2"><Badge tone="neutral">sponsorlu</Badge></span> : null}</Td>
+            <Td>{o.merchant}{o.brand !== o.merchant ? <span className="block text-[0.74rem] text-muted">{o.brand}</span> : null}</Td>
+            <Td>{o.category} · {o.country}</Td>
+            <Td>{o.networkId ? o.networkName : <span className="text-muted-2">ağ yok</span>} <Badge tone={o.networkStatus === "CONNECTED" ? "positive" : "warning"}>{o.networkStatus}</Badge>
+              <span className="block text-[0.72rem] text-muted">{INTEGRATION_LABEL[o.integrationType as IntegrationType] ?? o.integrationType}{o.trackingUrl ? " · referral ✓" : " · referral yok"}</span></Td>
+            <Td right>{num(o.impressions, lang)}</Td><Td right>{num(o.clicks, lang)}</Td><Td right>{o.conversions}</Td>
+            <Td><StatusBadge status={o.status} lang={lang} /></Td>
+            <Td right><span className="inline-flex flex-wrap justify-end gap-1.5">
+              <Button size="sm" variant="secondary" icon={<Icon.edit size={13} />} onClick={() => setOfferDlg({ offer: o })}>Düzenle</Button>
+              <Button size="sm" variant="secondary" onClick={() => void affCall({ action: "offer-status", id: o.id, status: o.status === "ACTIVE" ? "PAUSED" : "ACTIVE" }, "Fırsat durumu güncellendi")}>{o.status === "ACTIVE" ? "Duraklat" : "Aktifleştir"}</Button>
+              <Button size="sm" variant="danger" icon={<Icon.trash size={13} />} onClick={() => ask("Fırsat silinsin mi?", `${o.title}. Tıklama/dönüşüm kaydı olan fırsatlar silinemez; bunun yerine “Süresi doldu” yapın.`, async () => { await affCall({ action: "offer-delete", id: o.id }, "Fırsat silindi"); })}>Sil</Button>
+            </span></Td></tr>))}</tbody></Table>
+      )}
+      <OfferDialog open={!!offerDlg} onClose={() => setOfferDlg(null)} offer={offerDlg?.offer ?? null} networks={affiliate.networks} categories={cats} />
+      <ConfirmDialog confirm={confirm} onClose={() => setConfirm(null)} />
+    </Wrap>;
+  }
 
-  if (section === "affiliateNetworks") return <Wrap title="Affiliate ağ durumu" desc="Bağlantı kurulmamışsa kurulum durumu gösterilir; sahte canlı entegrasyon gösterilmez.">
-    <div className="grid gap-4 lg:grid-cols-2">
-      {affiliate.networks.map((n) => (
-        <Card key={n.id}>
-          <div className="flex flex-wrap items-start justify-between gap-3">
-            <div><p className="font-display text-[1.05rem] font-bold">{n.name}</p>
-              <p className="mt-1 text-[0.82rem] text-muted">{n.reportingMethod ?? "—"} · {n.commissionModel ?? "—"}</p></div>
-            <StatusBadge status={n.status === "CONNECTED" ? "ACTIVE" : n.status === "SUSPENDED" ? "BLOCKED" : "PENDING"} lang={lang} />
-          </div>
-          <p className="mt-3 text-[0.86rem] leading-relaxed text-muted">{n.notes}</p>
-          <p className="tabular mt-2 text-[0.76rem] text-muted-2">Son senkron: {n.lastSyncAt ? shortDate(n.lastSyncAt, lang) : "hiç"}</p>
-          <div className="mt-4 flex flex-wrap gap-2">
-            {["NOT_CONNECTED", "PENDING_CREDENTIALS", "CONNECTED", "SUSPENDED"].map((st) => (
-              <Button key={st} size="sm" variant={n.status === st ? "primary" : "secondary"}
-                onClick={() => ask("Ağ durumu değişecek", `${n.name} → ${st}. Bu değişiklik denetim kaydına yazılır.`, () => act({ action: "network-status", id: n.id, status: st }, "Ağ durumu güncellendi"))}>{st}</Button>
-            ))}
-          </div>
-        </Card>
-      ))}
-    </div>
+  if (section === "affiliateNetworks") return <Wrap title="Affiliate ağ ve marka entegrasyonları"
+    desc="iadeal benzeri platformlar veya doğrudan marka siteleri. Bağlantı kurulmamışsa kurulum durumu gösterilir; sahte canlı entegrasyon gösterilmez."
+    action={<Button icon={<Icon.plus size={15} />} onClick={() => setNetDlg({ network: null })}>Yeni ağ / marka</Button>}>
+    {affiliate.networks.length === 0 ? (
+      <EmptyState icon={<Icon.globe size={22} />} title="Henüz ağ veya marka entegrasyonu yok" desc="Ağ ekledikten sonra fırsatları bu ağa bağlayabilir, postback adresi üretebilirsiniz."
+        action={<Button onClick={() => setNetDlg({ network: null })} icon={<Icon.plus size={15} />}>Yeni ağ / marka</Button>} />
+    ) : (
+      <div className="grid gap-4 lg:grid-cols-2">
+        {affiliate.networks.map((n) => (
+          <Card key={n.id}>
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div><p className="font-display text-[1.05rem] font-bold">{n.name}</p>
+                <p className="mt-1 text-[0.82rem] text-muted">{n.kind === "DIRECT_BRAND" ? "Doğrudan marka" : "Platform / ağ"} · {n.reportingMethod ?? "—"} · {n.commissionModel ?? "—"}</p></div>
+              <StatusBadge status={n.status === "CONNECTED" ? "ACTIVE" : n.status === "SUSPENDED" ? "BLOCKED" : "PENDING"} lang={lang} />
+            </div>
+            {n.notes ? <p className="mt-3 text-[0.86rem] leading-relaxed text-muted">{n.notes}</p> : null}
+            <p className="tabular mt-2 text-[0.76rem] text-muted-2">Fırsat: {n.offerCount} · Tıklama parametresi: {n.clickParam} · Son senkron: {n.lastSyncAt ? shortDate(n.lastSyncAt, lang) : "hiç"}</p>
+            {n.baseUrl ? <a href={n.baseUrl} target="_blank" rel="noopener noreferrer" className="link-sweep mt-1 inline-block text-[0.78rem] text-accent">{n.baseUrl.replace(/^https?:\/\//, "")}</a> : null}
+            <div className="mt-4 flex flex-wrap gap-2">
+              {["NOT_CONNECTED", "PENDING_CREDENTIALS", "CONNECTED", "SUSPENDED"].map((st) => (
+                <Button key={st} size="sm" variant={n.status === st ? "primary" : "secondary"}
+                  onClick={() => ask("Ağ durumu değişecek", `${n.name} → ${st}. Bu değişiklik denetim kaydına yazılır.`, async () => { await affCall({ action: "network-status", id: n.id, status: st }, "Ağ durumu güncellendi"); })}>{st}</Button>
+              ))}
+            </div>
+            <div className="mt-3 flex flex-wrap gap-2 border-t-2 border-dashed border-line pt-3">
+              <Button size="sm" variant="secondary" icon={<Icon.edit size={13} />} onClick={() => setNetDlg({ network: n })}>Düzenle</Button>
+              <Button size="sm" variant="secondary" icon={<Icon.lock size={13} />} onClick={() => setPbNet(n)}>Postback adresi</Button>
+            </div>
+          </Card>
+        ))}
+      </div>
+    )}
+    <NetworkDialog open={!!netDlg} onClose={() => setNetDlg(null)} network={netDlg?.network ?? null} />
+    <PostbackDialog open={!!pbNet} onClose={() => setPbNet(null)} network={pbNet} />
     <ConfirmDialog confirm={confirm} onClose={() => setConfirm(null)} />
   </Wrap>;
 
-  if (section === "affiliateCommissions") return <Wrap title="Komisyon raporları ve yaşam döngüsü" desc="Tıklama → ağ raporu → bekleyen → onay/red → iade → ödendi. Bekleyen komisyon gelir değildir.">
+  if (section === "affiliateCommissions") return <Wrap title="Komisyon raporları ve yaşam döngüsü" desc="Tıklama → ağ raporu → bekleyen → onay/red → iade → ödendi. Bekleyen komisyon gelir değildir."
+    action={<Button variant="secondary" icon={<Icon.plus size={15} />} disabled={affiliate.offers.length === 0} onClick={() => setManualOpen(true)}>Manuel komisyon kaydı</Button>}>
     <Card className="mb-5">
       <p className="mb-4 text-[0.72rem] font-semibold uppercase tracking-[0.14em] text-muted">Komisyon yaşam döngüsü</p>
       <Funnel steps={[
@@ -715,17 +767,22 @@ export default function AdminDashboard({ data, lang, currency, section, affiliat
         { label: "Reddedilen / iade edilen", value: affiliate.totals.rejected + affiliate.totals.reversed, measured: true },
       ]} formatValue={(v) => num(v, lang)} />
     </Card>
-    <Table><thead><tr><Th>Fırsat</Th><Th>Satıcı</Th><Th>Kaynak</Th><Th right>Tutar</Th><Th>Rapor</Th><Th>Durum</Th><Th right>Yaşam döngüsü</Th></tr></thead>
-      <tbody>{affiliate.conversions.map((v) => (<tr key={v.id}>
-        <Td strong>{v.offerTitle}</Td><Td>{v.merchant}</Td>
-        <Td><Badge tone={v.source === "DEMO_SAMPLE" ? "warning" : "info"}>{v.source}</Badge>{v.networkReference ? <span className="tabular ml-2 text-[0.72rem] text-muted">{v.networkReference}</span> : null}</Td>
-        <Td right><span className="tabular">{v.commissionCents != null ? money(v.commissionCents, v.currency as Currency, lang) : "—"}</span></Td>
-        <Td>{v.reportedAt ? shortDate(v.reportedAt, lang) : "—"}</Td>
-        <Td><StatusBadge status={v.status === "REPORTED" ? "SUBMITTED" : v.status} lang={lang} /></Td>
-        <Td right><Select value={v.status} onChange={(e) => ask("Komisyon durumu", `${v.offerTitle} → ${e.target.value}. Ağ raporuna dayanmayan onay gelir yaratmaz.`, () => act({ action: "conversion-status", id: v.id, status: e.target.value }, "Komisyon durumu güncellendi"))} className="h-8 py-0 text-[0.76rem]">
-          {["REPORTED", "PENDING", "APPROVED", "REJECTED", "REVERSED", "PAID"].map((st) => <option key={st} value={st}>{st}</option>)}
-        </Select></Td></tr>))}</tbody></Table>
+    {affiliate.conversions.length === 0 ? (
+      <EmptyState icon={<Icon.receipt size={22} />} title="Henüz komisyon raporu yok" desc="Ağ postback'i veya manuel kayıt geldiğinde burada listelenir. Rapor yoksa dönüşüm var sayılmaz." />
+    ) : (
+      <Table><thead><tr><Th>Fırsat</Th><Th>Satıcı</Th><Th>Kaynak</Th><Th right>Tutar</Th><Th>Rapor</Th><Th>Durum</Th><Th right>Yaşam döngüsü</Th></tr></thead>
+        <tbody>{affiliate.conversions.map((v) => (<tr key={v.id}>
+          <Td strong>{v.offerTitle}</Td><Td>{v.merchant}</Td>
+          <Td><Badge tone={v.source === "DEMO_SAMPLE" ? "warning" : "info"}>{v.source}</Badge>{v.networkReference ? <span className="tabular ml-2 text-[0.72rem] text-muted">{v.networkReference}</span> : null}</Td>
+          <Td right><span className="tabular">{v.commissionCents != null ? money(v.commissionCents, v.currency as Currency, lang) : "—"}</span></Td>
+          <Td>{v.reportedAt ? shortDate(v.reportedAt, lang) : "—"}</Td>
+          <Td><StatusBadge status={v.status === "REPORTED" ? "SUBMITTED" : v.status} lang={lang} /></Td>
+          <Td right><Select value={v.status} onChange={(e) => { const next = e.target.value; ask("Komisyon durumu", `${v.offerTitle} → ${next}. Ağ raporuna dayanmayan onay gelir yaratmaz.`, async () => { await affCall({ action: "conversion-status", id: v.id, status: next }, "Komisyon durumu güncellendi"); }); }} className="h-8 py-0 text-[0.76rem]">
+            {["REPORTED", "PENDING", "APPROVED", "REJECTED", "REVERSED", "PAID"].map((st) => <option key={st} value={st}>{st}</option>)}
+          </Select></Td></tr>))}</tbody></Table>
+    )}
     <p className="mt-3 text-[0.78rem] text-muted">Demo kaynaklı kayıtlar <span className="tabular">DEMO_SAMPLE</span> olarak işaretlenir ve canlı ağ raporundan gelmiş gibi sunulmaz.</p>
+    <ManualConversionDialog open={manualOpen} onClose={() => setManualOpen(false)} offers={affiliate.offers} />
     <ConfirmDialog confirm={confirm} onClose={() => setConfirm(null)} />
   </Wrap>;
 
@@ -735,8 +792,8 @@ export default function AdminDashboard({ data, lang, currency, section, affiliat
   </Wrap>;
 }
 
-function Wrap({ title, desc, children }: { title: string; desc?: string; children: React.ReactNode }) {
-  return <div><DashSectionHead title={title} desc={desc} />{children}</div>;
+function Wrap({ title, desc, children, action }: { title: string; desc?: string; children: React.ReactNode; action?: React.ReactNode }) {
+  return <div><DashSectionHead title={title} desc={desc} action={action} />{children}</div>;
 }
 
 function HBarsInline({ rows }: { rows: { label: string; value: number }[] }) {

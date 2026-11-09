@@ -12,7 +12,7 @@
  *    (sayfa render'ını engellemez).
  */
 import { createClient } from "@/lib/supabase/server";
-import type { BusinessRow, FeeRuleRow, PackageRow } from "./types";
+import type { BusinessRow, FeeRuleRow, OfferMenu, PackageRow } from "./types";
 import { parseOrderQuota } from "@/lib/orderQuota";
 
 type Row = Record<string, unknown>;
@@ -1357,21 +1357,75 @@ function toOffer(r: Row) {
     impressions: n(r.impressions),
     networkName: nul(net.name) ?? "—",
     networkStatus: nul(net.status) ?? null,
+    brand: nul(r.brand) ?? str(r.merchant),
+    videoUrl: nul(r.video_url),
+    integrationType: nul(r.integration_type) ?? "NETWORK",
+    commissionRatePercent: r.commission_rate_percent == null ? null : n(r.commission_rate_percent),
+    cookieDays: r.cookie_days == null ? null : n(r.cookie_days),
   };
 }
 
 const OFFER_EMBED_NOTE = "Fırsat sorguları ağ bilgisini ayrı sorguda alır (network_id).";
 
-export async function listOffers(opts?: { limit?: number; category?: string; country?: string }) {
+export async function listOffers(opts?: { limit?: number; category?: string; country?: string; brand?: string }) {
   const client = await sb();
   let q = client.from("affiliate_offers").select("*").eq("status", "ACTIVE");
   if (opts?.category) q = q.eq("category", opts.category);
   if (opts?.country) q = q.eq("country", opts.country);
+  if (opts?.brand) q = q.eq("brand", opts.brand);
   const { data } = await q
     .order("is_sponsored", { ascending: false })
     .order("last_updated", { ascending: false })
     .limit(opts?.limit ?? 40);
-  return ((data ?? []) as Row[]).map((r) => toOffer(r));
+  const rows = (data ?? []) as Row[];
+
+  // Ağ adı/durumu tek ek sorguda (embed yok): kartlardaki "ağ bağlı" rozeti gerçek duruma dayanır.
+  const netIds = Array.from(new Set(rows.map((r) => r.network_id).filter(Boolean).map(String)));
+  const nets = new Map<string, Row>();
+  if (netIds.length) {
+    const { data: nd } = await client.from("affiliate_networks").select("id, name, status").in("id", netIds);
+    for (const x of (nd ?? []) as Row[]) nets.set(str(x.id), x);
+  }
+
+  const now = Date.now();
+  return rows
+    .filter((r) => !r.ends_at || new Date(String(r.ends_at)).getTime() >= now) // süresi dolan listelenmez
+    .filter((r) => !r.starts_at || new Date(String(r.starts_at)).getTime() <= now) // henüz başlamayan listelenmez
+    .map((r) => toOffer({ ...r, affiliate_networks: r.network_id ? nets.get(str(r.network_id)) ?? {} : {} }));
+}
+
+/** Gösterim sayacı: listelenen fırsatlar için bir artış (RPC; anonim çağrılabilir). Hata sessizce yutulur. */
+export async function bumpOfferImpressions(ids: string[]) {
+  if (!ids.length) return;
+  try {
+    const client = await sb();
+    await client.rpc("dv_offer_impressions", { p_offer_ids: ids.slice(0, 60) });
+  } catch {
+    /* sayaç sayfayı asla bozmaz */
+  }
+}
+
+/** Online fırsatlar mega menüsü (iadeal "Tüm Kategoriler ve Mağazalar" benzeri). */
+export async function getOfferMenu(): Promise<OfferMenu> {
+  const offers = await listOffers({ limit: 200 });
+  const cats = new Map<string, { n: number; brands: Map<string, number> }>();
+  for (const o of offers) {
+    const c = cats.get(o.category) ?? { n: 0, brands: new Map<string, number>() };
+    c.n += 1;
+    c.brands.set(o.brand, (c.brands.get(o.brand) ?? 0) + 1);
+    cats.set(o.category, c);
+  }
+  return {
+    categories: Array.from(cats.entries())
+      .map(([category, v]) => ({
+        category,
+        n: v.n,
+        brands: Array.from(v.brands.entries()).map(([brand, count]) => ({ brand, n: count })).sort((a, b) => b.n - a.n).slice(0, 10),
+      }))
+      .sort((a, b) => b.n - a.n)
+      .slice(0, 12),
+    featured: offers.filter((o) => o.isSponsored).slice(0, 4).map((o) => ({ slug: o.slug, title: o.title, brand: o.brand })),
+  };
 }
 
 export async function getOfferBySlug(slug: string) {
@@ -1434,6 +1488,11 @@ export async function getAffiliateData() {
       commissionModel: nul(x.commission_model),
       notes: nul(x.notes),
       lastSyncAt: iso(x.last_sync_at),
+      kind: nul(x.kind) ?? "PLATFORM",
+      baseUrl: nul(x.base_url),
+      clickParam: nul(x.click_param) ?? "subid",
+      defaultCookieDays: x.default_cookie_days == null ? null : n(x.default_cookie_days),
+      offerCount: offerRows.filter((o) => str(o.network_id) === str(x.id)).length,
     })),
     offers: offerRows.map((o) => ({
       id: str(o.id),
@@ -1454,6 +1513,24 @@ export async function getAffiliateData() {
       endsAt: iso(o.ends_at),
       lastUpdated: iso(o.last_updated),
       conversions: convRows.filter((c) => str(c.offer_id) === str(o.id)).length,
+      brand: nul(o.brand) ?? str(o.merchant),
+      imageUrl: nul(o.image_url),
+      videoUrl: nul(o.video_url),
+      networkId: nul(o.network_id),
+      integrationType: nul(o.integration_type) ?? "NETWORK",
+      description: nul(o.description),
+      destinationUrl: str(o.destination_url),
+      trackingUrl: nul(o.tracking_url),
+      clickParam: nul(o.click_param),
+      priceCents: o.price_cents == null ? null : n(o.price_cents),
+      priceVerified: Boolean(o.price_verified),
+      commissionRatePercent: o.commission_rate_percent == null ? null : n(o.commission_rate_percent),
+      commissionFixedCents: o.commission_fixed_cents == null ? null : n(o.commission_fixed_cents),
+      cookieDays: o.cookie_days == null ? null : n(o.cookie_days),
+      disclosure: str(o.disclosure),
+      terms: nul(o.terms),
+      exclusions: Array.isArray(o.exclusions) ? (o.exclusions as string[]) : [],
+      startsAt: iso(o.starts_at),
     })),
     clicks: clickRows.map((c) => ({
       id: str(c.id),

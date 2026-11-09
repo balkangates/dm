@@ -10,7 +10,7 @@ import {
   BusinessFlowPanel, BusinessHome, CustomerHome, FinancialBoundary, ModeTicker, type Brand,
 } from "@/components/HomeModes";
 import {
-  ensureSeeded, listBusinesses, listCampaignCards, listCategories, listDistricts, listOffers, listVideos,
+  bumpOfferImpressions, ensureSeeded, listBusinesses, listCampaignCards, listCategories, listDistricts, listOffers, listVideos,
 } from "@/lib/queries";
 import { makeT } from "@/lib/i18n";
 import { num } from "@/lib/money";
@@ -52,10 +52,11 @@ export default async function HomePage({ searchParams }: { searchParams: Promise
       ]);
   const [campaigns, businesses, categories, districts, offers, videos] = data ?? [[], [], [], [], [], []];
 
+  if (!isBusiness) await bumpOfferImpressions(offers.map((o) => o.id));
   const brands = offers.reduce<Brand[]>((acc, o) => {
-    const found = acc.find((b) => b.merchant === o.merchant);
+    const found = acc.find((b) => b.merchant === o.brand);
     if (found) found.count += 1;
-    else acc.push({ merchant: o.merchant, category: o.category, slug: o.slug, count: 1, image: o.imageUrl });
+    else acc.push({ merchant: o.brand, category: o.category, slug: o.slug, count: 1, image: o.imageUrl });
     return acc;
   }, []);
   const trending = [...campaigns].sort((a, b) => b.rating - a.rating).slice(0, 3);

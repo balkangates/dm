@@ -5,7 +5,7 @@ import { PublicShell, type SessionLite } from "@/components/Shell";
 import { PaperHead, Stamp, ToastProvider } from "@/components/ds";
 import { Icon } from "@/components/icons";
 import OfferDiscovery, { OfferSkeleton } from "@/components/offers";
-import { ensureSeeded, listOfferCategories, listOffers, trackEvent } from "@/lib/queries";
+import { bumpOfferImpressions, ensureSeeded, listOfferCategories, listOffers, trackEvent } from "@/lib/queries";
 
 export const dynamic = "force-dynamic";
 export const metadata = {
@@ -25,8 +25,13 @@ export default async function OnlineOffersPage({
     currentUser(), getLocale(), listOffers({ limit: 60 }), listOfferCategories(),
   ]);
   const q = typeof sp.q === "string" ? sp.q : "";
-  const cat = typeof sp.kategori === "string" ? sp.kategori : undefined;
-  await trackEvent("affiliate_impression", { userId: user?.id ?? null, meta: { q, cat, count: offers.length } });
+  const cat = typeof sp.kategori === "string" ? sp.kategori : "";
+  const brand = typeof sp.marka === "string" ? sp.marka : "";
+  const hasSample = offers.some((o) => o.isSample);
+  await Promise.all([
+    trackEvent("affiliate_impression", { userId: user?.id ?? null, meta: { q, cat, brand, count: offers.length } }),
+    bumpOfferImpressions(offers.map((o) => o.id)),
+  ]);
 
   const session: SessionLite = user
     ? { id: user.id, name: user.name, email: user.email, role: user.role, businessId: user.businessId, referralCode: user.referralCode }
@@ -41,7 +46,7 @@ export default async function OnlineOffersPage({
           note="Bu alan yerel işletme kampanyalarından ayrıdır. Teklifler izlenen bağlantıyla satıcının kendi sitesine yönlendirir; satın alma DampingVar içinde tamamlanmaz."
           action={
             <div className="flex flex-wrap items-center gap-2">
-              <Stamp>Örnek içerik</Stamp>
+              {hasSample ? <Stamp>Örnek içerik</Stamp> : null}
               <span className="inline-flex items-center gap-1.5 border-2 border-line bg-surface px-2.5 py-1 text-[0.7rem] font-bold uppercase tracking-[0.1em] text-muted">
                 <Icon.external size={12} /> Satıcıya yönlendirir
               </span>
@@ -57,6 +62,8 @@ export default async function OnlineOffersPage({
               lang={locale.lang}
               currency={locale.currency}
               initialQuery={q}
+              initialCategory={cat}
+              initialBrand={brand}
               userId={user?.id ?? null}
             />
           </Suspense>

@@ -177,6 +177,11 @@ export function OfferCardView({
           ) : null}
         </div>
         <span className="absolute bottom-2 left-2.5 text-[0.72rem] font-semibold text-surface">{o.merchant}</span>
+        {o.videoUrl ? (
+          <span className="absolute bottom-2 right-2.5 inline-flex items-center gap-1 border-2 border-surface/80 bg-ink/70 px-1.5 py-0.5 text-[0.62rem] font-bold uppercase tracking-[0.1em] text-surface">
+            <IconSafe.play size={10} /> Video
+          </span>
+        ) : null}
       </div>
 
       <div className="flex min-w-0 flex-1 flex-col p-4">
@@ -220,8 +225,8 @@ export function OfferCardView({
             </span>
           </div>
           <div className="flex items-baseline justify-between gap-3">
-            <span className="text-muted">Satıcı</span>
-            <span className="truncate text-[0.78rem] font-medium text-ink">{o.country}</span>
+            <span className="text-muted">Marka</span>
+            <span className="truncate text-[0.78rem] font-medium text-ink">{o.brand} · {o.country}</span>
           </div>
         </div>
 
@@ -231,10 +236,10 @@ export function OfferCardView({
           <Button href={href} size="sm" variant="secondary" className="flex-1">
             Teklifi Gör
           </Button>
-          {o.networkStatus && o.networkStatus !== "CONNECTED" ? (
-            <Badge tone="warning">ağ bağlı değil</Badge>
+          {o.isSample ? (
+            <Badge tone="warning">örnek</Badge>
           ) : (
-            <Badge tone="positive">ağ bağlı</Badge>
+            <Badge tone="neutral"><IconSafe.external size={11} /> satıcıya yönlendirir</Badge>
           )}
         </div>
       </div>
@@ -252,6 +257,8 @@ export default function OfferDiscovery({
   lang,
   currency,
   initialQuery = "",
+  initialCategory = "",
+  initialBrand = "",
   savedIds = [],
   userId,
 }: {
@@ -260,12 +267,15 @@ export default function OfferDiscovery({
   lang: Lang;
   currency: Currency;
   initialQuery?: string;
+  initialCategory?: string;
+  initialBrand?: string;
   savedIds?: string[];
   userId?: string | null;
 }) {
   const toast = useToast();
   const [q, setQ] = useState(initialQuery);
-  const [cat, setCat] = useState("");
+  const [cat, setCat] = useState(initialCategory);
+  const [brand, setBrand] = useState(initialBrand);
   const [country, setCountry] = useState("");
   const [sort, setSort] = useState("recent");
   const [layout, setLayout] = useState<"grid" | "list">("grid");
@@ -273,11 +283,18 @@ export default function OfferDiscovery({
   const [loading, setLoading] = useState(false);
 
   const countries = useMemo(() => Array.from(new Set(offers.map((o) => o.country))), [offers]);
+  const brands = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const o of offers) if (!cat || o.category === cat) m.set(o.brand, (m.get(o.brand) ?? 0) + 1);
+    return Array.from(m.entries()).sort((a, b) => b[1] - a[1]);
+  }, [offers, cat]);
+  const hasSample = useMemo(() => offers.some((o) => o.isSample), [offers]);
 
   const results = useMemo(() => {
     const needle = q.trim().toLocaleLowerCase("tr-TR");
     let list = offers.filter((o) => {
       if (cat && o.category !== cat) return false;
+      if (brand && o.brand !== brand) return false;
       if (country && o.country !== country) return false;
       if (!needle) return true;
       return [o.title, o.merchant, o.description ?? "", o.category].join(" ").toLocaleLowerCase("tr-TR").includes(needle);
@@ -289,7 +306,7 @@ export default function OfferDiscovery({
       return Number(b.isSponsored) - Number(a.isSponsored) || String(b.lastUpdated ?? "").localeCompare(String(a.lastUpdated ?? ""));
     });
     return list;
-  }, [offers, q, cat, country, sort]);
+  }, [offers, q, cat, brand, country, sort]);
 
   async function toggleSave(id: string, next: boolean) {
     if (!userId) {
@@ -361,6 +378,17 @@ export default function OfferDiscovery({
               </Chip>
             ))}
           </div>
+          {brands.length > 1 ? (
+            <div className="no-scrollbar -mx-1 flex items-center gap-2 overflow-x-auto px-1">
+              <span className="inline-flex shrink-0 items-center gap-1.5 text-[0.76rem] font-bold uppercase tracking-[0.12em] text-muted">
+                <IconSafe.store size={14} /> Marka
+              </span>
+              <Chip active={brand === ""} onClick={() => setBrand("")}>Tümü</Chip>
+              {brands.map(([b, count]) => (
+                <Chip key={b} active={brand === b} onClick={() => setBrand(b)} count={count}>{b}</Chip>
+              ))}
+            </div>
+          ) : null}
           <div className="flex flex-wrap items-center gap-2">
             <span className="inline-flex items-center gap-1.5 text-[0.76rem] font-bold uppercase tracking-[0.12em] text-muted">
               <IconSafe.globe size={14} /> Ülke
@@ -378,25 +406,30 @@ export default function OfferDiscovery({
           <span className="tabular font-bold text-ink">{results.length}</span> online fırsat
           {loading ? <span className="ml-2 text-accent">· işleniyor…</span> : null}
         </p>
-        {q || cat || country ? (
-          <Button size="sm" variant="ghost" icon={<IconSafe.refresh size={14} />} onClick={() => { setQ(""); setCat(""); setCountry(""); setSort("recent"); }}>
+        {q || cat || brand || country ? (
+          <Button size="sm" variant="ghost" icon={<IconSafe.refresh size={14} />} onClick={() => { setQ(""); setCat(""); setBrand(""); setCountry(""); setSort("recent"); }}>
             Filtreleri temizle
           </Button>
         ) : null}
       </div>
 
-      <Notice tone="warning" icon={<IconSafe.alert size={16} />} className="mb-5">
-        Aşağıdaki teklifler <strong>örnek/demo içeriktir</strong>; gerçek bir markanın aktif kampanyası değildir.
-        Affiliate ağ bağlantısı kurulmadığı için komisyon verileri canlı rapordan gelmez. Alışveriş ve ödeme her
-        zaman satıcının kendi sitesinde tamamlanır.
-      </Notice>
+      {hasSample ? (
+        <Notice tone="warning" icon={<IconSafe.alert size={16} />} className="mb-5">
+          “örnek” etiketli teklifler <strong>demo içeriktir</strong>; gerçek bir markanın aktif kampanyası değildir.
+        </Notice>
+      ) : null}
+      <p className="mb-5 flex items-start gap-2 text-[0.8rem] leading-relaxed text-muted">
+        <IconSafe.info size={14} className="mt-0.5 shrink-0" />
+        Teklifler izlenen bağlantıyla satıcının kendi sitesine yönlendirir. Alışveriş ve ödeme her zaman satıcının sitesinde tamamlanır;
+        bağlantı üzerinden gerçekleşen uygun alışverişlerden DampingVar komisyon kazanabilir.
+      </p>
 
       {results.length === 0 ? (
         <EmptyState
           icon={<IconSafe.search size={22} />}
           title="Filtrelere uyan online fırsat yok"
           desc="Arama terimini değiştir veya daha az filtre uygula."
-          action={<Button variant="secondary" onClick={() => { setQ(""); setCat(""); setCountry(""); }}>Filtreleri temizle</Button>}
+          action={<Button variant="secondary" onClick={() => { setQ(""); setCat(""); setBrand(""); setCountry(""); }}>Filtreleri temizle</Button>}
         />
       ) : (
         <div className={layout === "grid" ? "grid gap-5 sm:grid-cols-2 xl:grid-cols-3" : "flex flex-col gap-4"}>

@@ -9,6 +9,7 @@ import { DashSectionHead, StatusBadge, type NavItem } from "@/components/Dash";
 import { money, num, pct, shortDate, type Currency, type Lang } from "@/lib/money";
 import type { getAdminData } from "@/lib/queries";
 import { getBrowserSupabase } from "@/lib/supabase/client";
+import { BalancesView, InvoicesView, StatementView } from "@/components/AdminBilling";
 
 export type AdminData = Awaited<ReturnType<typeof getAdminData>>;
 
@@ -27,6 +28,8 @@ export const ADMIN_NAV: NavItem[] = [
   { key: "ai", label: "AI Pazarlama Hizmetleri", icon: <Icon.spark size={16} />, group: "Gelir" },
   { key: "fees", label: "Hizmet Bedelleri", icon: <Icon.tag size={16} />, group: "Gelir" },
   { key: "invoices", label: "Faturalar", icon: <Icon.receipt size={16} />, group: "Gelir" },
+  { key: "statement", label: "Hesap Ekstresi", icon: <Icon.layers size={16} />, group: "Gelir" },
+  { key: "balances", label: "Hesap Bakiyeleri", icon: <Icon.chart size={16} />, group: "Gelir" },
   { key: "analytics", label: "Analitik", icon: <Icon.eye size={16} />, group: "Operasyon" },
   { key: "reports", label: "Raporlar", icon: <Icon.layers size={16} />, group: "Operasyon" },
   { key: "fraud", label: "Fraud ve Kötüye Kullanım", icon: <Icon.alert size={16} />, group: "Operasyon" },
@@ -583,16 +586,10 @@ export default function AdminDashboard({ data, lang, currency, section, affiliat
         <Td><Toggle checked={f.active} onChange={() => void act({ action: "fee_rule_update", id: f.id, amountCents: f.amountCents, rate: f.rate, active: !f.active }, "Kural güncellendi")} label="Aktif" /></Td></tr>))}</tbody></Table>
   </Wrap>;
 
-  if (section === "invoices") return <Wrap title="Faturalar ve tahsilat durumu" desc="DampingVar hizmet bedeli faturaları. Müşteri ödemesi burada yer almaz.">
-    <Table><thead><tr><Th>Fatura</Th><Th>İşletme</Th><Th>Dönem</Th><Th right>Tutar</Th><Th>Vade</Th><Th>Durum</Th><Th right>İşlem</Th></tr></thead>
-      <tbody>{data.invoices.map((i) => (<tr key={i.id}><Td strong className="tabular">{i.number}</Td><Td>{i.businessName}</Td>
-        <Td>{i.periodStart ? shortDate(i.periodStart, lang) : "—"} → {i.periodEnd ? shortDate(i.periodEnd, lang) : "—"}</Td>
-        <Td right className="tabular">{money(i.totalCents, i.currency as Currency, lang)}</Td><Td>{i.dueDate ? shortDate(i.dueDate, lang) : "—"}</Td>
-        <Td><StatusBadge status={i.status} lang={lang} /></Td>
-        <Td right><Select value={i.status} onChange={(e) => void ask("Fatura durumu", `${i.number} → ${e.target.value}`, () => act({ action: "invoice_status", id: i.id, status: e.target.value }, "Fatura güncellendi"))} className="h-8 py-0 text-[0.78rem]">
-          {["DRAFT", "ISSUED", "SENT", "PAID", "PARTIALLY_PAID", "OVERDUE", "CANCELLED"].map((s) => <option key={s} value={s}>{s}</option>)}</Select></Td></tr>))}</tbody></Table>
-    <ConfirmDialog confirm={confirm} onClose={() => setConfirm(null)} />
-  </Wrap>;
+  /* Faturalama / cari hesap: fatura kaydı formu, ödeme durumları, ekstre ve bakiye listesi. */
+  if (section === "invoices") return <InvoicesView data={data} lang={lang} currency={currency} />;
+  if (section === "statement") return <StatementView data={data} lang={lang} currency={currency} />;
+  if (section === "balances") return <BalancesView data={data} lang={lang} currency={currency} />;
 
   /* FAZ 12A — platform sipariş izleme (sesli asistan/web; ödeme kapıda). */
   if (section === "orders") {

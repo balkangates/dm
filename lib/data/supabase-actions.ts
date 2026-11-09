@@ -1253,18 +1253,83 @@ export async function adminAction(user: SessionUserLite, body: Row) {
       await logAudit(user.email, "ADMIN", "FEE_RULE_UPDATED", "service_fee_rules", id, {});
       return Response.json({ ok: true, rule: cam(row as Row) });
     }
-    case "invoice_status": {
-      const status = String(body.status ?? "");
-      if (!["DRAFT", "ISSUED", "SENT", "PAID", "PARTIALLY_PAID", "OVERDUE", "CANCELLED"].includes(status))
-        throw new ActionError(400, "Geçersiz fatura durumu.");
-      const patch: Row = { status };
-      if (status === "ISSUED") patch.issued_at = new Date().toISOString();
-      patch.paid_at = status === "PAID" ? new Date().toISOString() : null;
-      const { data: row, error } = await client.from("invoices").update(patch).eq("id", id).select("*").maybeSingle();
+    /* ---------------- Faturalama / cari hesap (yalnız ADMIN; RPC'ler ayrıca is_admin() doğrular) ---------------- */
+    case "billing_preview": {
+      const { data, error } = await client.rpc("dv_billing_preview", {
+        p_business_id: String(body.businessId ?? ""), p_period: String(body.period ?? ""),
+      });
       if (error) fail(error);
-      if (!row) throw new ActionError(404, "Fatura bulunamadı.");
-      await logAudit(user.email, "ADMIN", `INVOICE_${status}`, "invoices", id, { number: row.number });
-      return Response.json({ ok: true, invoice: cam(row as Row) });
+      return Response.json({ ok: true, preview: data });
+    }
+    case "billing_invoice_create": {
+      const rate = Number(body.taxRatePct) / 100;
+      if (!Number.isFinite(rate)) throw new ActionError(400, "KDV oranı gerekli.");
+      const extra = Array.isArray(body.extra) ? body.extra : [];
+      const { data, error } = await client.rpc("dv_billing_create_invoice", {
+        p_business_id: String(body.businessId ?? ""),
+        p_period: String(body.period ?? ""),
+        p_number: String(body.number ?? ""),
+        p_invoice_date: String(body.invoiceDate ?? ""),
+        p_tax_rate: rate,
+        p_note: body.note ? String(body.note) : null,
+        p_extra: extra,
+        p_allow_additional: body.allowAdditional === true,
+      });
+      if (error) fail(error);
+      const r = (data ?? {}) as Row;
+      await logAudit(user.email, "ADMIN", "INVOICE_CREATED", "invoices", String(r.invoiceId ?? ""), {
+        number: r.number, totalCents: r.totalCents, period: body.period,
+      });
+      return Response.json({ ok: true, invoice: r });
+    }
+    case "billing_set_status": {
+      const status = String(body.status ?? "");
+      const { data, error } = await client.rpc("dv_billing_set_status", {
+        p_invoice_id: id, p_status: status,
+        p_date: body.date ? String(body.date) : null,
+        p_method: body.method ? String(body.method) : null,
+        p_note: body.note ? String(body.note) : null,
+      });
+      if (error) fail(error);
+      await logAudit(user.email, "ADMIN", `INVOICE_${status}`, "invoices", id, {});
+      return Response.json({ ok: true, result: data });
+    }
+    case "billing_balances": {
+      const { data, error } = await client.rpc("dv_billing_balances", { p_as_of: body.asOf ? String(body.asOf) : null });
+      if (error) fail(error);
+      return Response.json({ ok: true, balances: data ?? [] });
+    }
+    case "billing_statement": {
+      const businessId = String(body.businessId ?? "");
+      if (!businessId) throw new ActionError(400, "İşletme seçin.");
+      const from = body.from ? String(body.from) : null;
+      const to = body.to ? String(body.to) : null;
+      const { data: rows, error } = await client
+        .from("billing_entries").select("*").eq("business_id", businessId)
+        .order("entry_date", { ascending: true }).order("created_at", { ascending: true });
+      if (error) fail(error);
+      const all = (rows ?? []) as Row[];
+      const mapE = (r: Row) => ({
+        id: String(r.id), entryDate: String(r.entry_date), createdAt: String(r.created_at ?? ""), kind: String(r.kind),
+        description: String(r.description ?? ""), debitCents: Number(r.debit_cents ?? 0), creditCents: Number(r.credit_cents ?? 0),
+        invoiceId: r.invoice_id ? String(r.invoice_id) : null,
+      });
+      const entries = all.map(mapE);
+      const opening = from ? entries.filter((e) => e.entryDate < from).reduce((x, e) => x + e.debitCents - e.creditCents, 0) : 0;
+      const inRange = entries.filter((e) => (!from || e.entryDate >= from) && (!to || e.entryDate <= to));
+      return Response.json({ ok: true, openingCents: opening, entries: inRange });
+    }
+    case "invoice_status": {
+      /* Eski uç: yalnızca cari hesaba yazan yeni akışa yönlendirilir (durum elle değiştirilemez). */
+      const status = String(body.status ?? "");
+      if (!["PAID", "CANCELLED", "REFUNDED"].includes(status))
+        throw new ActionError(400, "Fatura durumu yalnızca ödeme geldi / iptal / iade olarak değiştirilebilir.");
+      const { error } = await client.rpc("dv_billing_set_status", {
+        p_invoice_id: id, p_status: status, p_date: null, p_method: null, p_note: null,
+      });
+      if (error) fail(error);
+      await logAudit(user.email, "ADMIN", `INVOICE_${status}`, "invoices", id, {});
+      return Response.json({ ok: true });
     }
     case "bonus_policy_update": {
       const { data: row, error } = await client

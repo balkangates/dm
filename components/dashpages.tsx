@@ -94,7 +94,7 @@ export function AdminDash({ user, data, locale, initial, affiliate }: {
           overview: ["Platform özeti", ""], customers: ["Müşteriler", ""], businesses: ["İşletmeler ve markalar", ""],
           moderation: ["Kampanya moderasyonu", ""], qr: ["QR etkinliği", ""], referrals: ["Yönlendirme izleme", ""],
           bonusRules: ["Damping Bonus kuralları", ""], ads: ["Reklam paketleri", ""], ai: ["AI pazarlama hizmetleri", ""],
-          fees: ["Hizmet bedelleri", ""], invoices: ["Faturalar", ""], analytics: ["Analitik", ""],
+          fees: ["Hizmet bedelleri", ""], invoices: ["Faturalar", ""], statement: ["Hesap ekstresi", ""], balances: ["Hesap bakiyeleri", ""], analytics: ["Analitik", ""],
           reports: ["Raporlar", "CSV dışa aktarım · hizmet geliri ile müşteri indirimleri ayrı"],
           fraud: ["Fraud izleme", ""], settings: ["Sistem ayarları", ""], audit: ["Denetim kayıtları", ""],
         }}

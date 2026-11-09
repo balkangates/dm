@@ -1203,6 +1203,11 @@ export async function getAdminData() {
       status: str(i.status),
       dueDate: iso(i.due_date),
       paidAt: iso(i.paid_at),
+      invoiceDate: i.invoice_date ? String(i.invoice_date) : null,
+      period: i.period ? String(i.period) : null,
+      paymentDate: i.payment_date ? String(i.payment_date) : null,
+      paymentMethod: i.payment_method ? String(i.payment_method) : null,
+      taxRate: n(i.tax_rate),
     })),
     ads: ((ads.data ?? []) as Row[]).map((a) => ({
       id: str(a.id),

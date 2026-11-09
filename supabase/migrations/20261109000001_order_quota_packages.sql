@@ -13,7 +13,8 @@
 --    ve dönem sonunda silinmez.
 --  * Kota + bakiye bitince yeni sipariş alınmaz (müşteriye "şu an sipariş
 --    alınamıyor" denir); bakiye eklenince veya dönem yenilenince açılır.
---  * Bütün değerler packages tablosundadır; yönetim panelinden güncellenir.
+--  * Bütün değerler (kota, ek sipariş birim fiyatı, en az adet) packages tablosundadır ve
+--    yalnızca yönetim panelinden girilir; kodda/migration'da sabit değer yoktur.
 --    NULL = bu paket için sipariş limiti TANIMSIZ (sınırlama uygulanmaz) —
 --    migration mevcut işletmelerin siparişini kesmez.
 --  * DampingVar müşteri ödemesi almaz: bakiye ekleme, işletmeye sunulan
@@ -243,10 +244,7 @@ grant execute on function public.dv_order_capacity_available(uuid) to anon, auth
 revoke all on function public.dv_consume_order_slot() from public, anon, authenticated;
 grant execute on function public.dv_topup_order_credits(uuid, integer) to authenticated, service_role;
 
--- ------------------------- DEMO tohum değerleri -------------------- *
--- Gerçek değerler yönetim panelinden girilir. Yalnızca henüz tanımsız (NULL) paketlere yazılır;
--- yönetici güncellemeleri ezilmez. Bu rakamlar DEMO'dur.
-update public.packages set order_quota_monthly = 20,   order_unit_price_cents = 800, order_topup_min_qty = 10  where code = 'FREE'  and order_quota_monthly is null;
-update public.packages set order_quota_monthly = 300,  order_unit_price_cents = 600, order_topup_min_qty = 50  where code = 'PRO'   and order_quota_monthly is null;
-update public.packages set order_quota_monthly = 1000, order_unit_price_cents = 400, order_topup_min_qty = 100 where code = 'BOOST' and order_quota_monthly is null;
-update public.packages set order_quota_monthly = 2000, order_unit_price_cents = 300, order_topup_min_qty = 100 where code = 'AI28'  and order_quota_monthly is null;
+-- ------------------------- değerler ------------------------------- *
+-- Kota, ek sipariş birim fiyatı ve en az bakiye adedi KODA / MIGRATION'A GÖMÜLÜ DEĞİLDİR.
+-- Hepsini yönetici, Yönetim Paneli > Paketler ekranından paket bazında girer.
+-- Girilene kadar: kota NULL (sınırlama yok), birim fiyat NULL (bakiye eklenemez).

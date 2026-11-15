@@ -82,6 +82,7 @@ export type StudioVideo = {
   scenes: { at: string; visual: string; caption: string; image?: string | null }[];
   captions: Record<string, string[]>; steps: string[]; poster: string | null;
   storagePath: string | null;
+  videoUrl?: string | null;
   renderStatus: string; status: string;
 };
 
@@ -2328,6 +2329,7 @@ function StudioSection({ d, post, videos, lang }: { d: BD; post: (r: string, b: 
               lang={lang}
               poster={active.poster ?? undefined}
               steps={active.steps}
+              videoSrc={active.videoUrl ?? undefined}
             />
           ) : (
             <EmptyState icon={<Icon.video size={22} />} title="Video anlatımı yok" />

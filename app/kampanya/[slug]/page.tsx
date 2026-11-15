@@ -8,7 +8,8 @@ import { Badge, Button, Card, Notice, QrPanel, SectionHead } from "@/components/
 import { Icon } from "@/components/icons";
 import { CampaignActions } from "@/components/CampaignActions";
 import { CampaignCardView } from "@/components/discovery";
-import { ensureSeeded, getCampaignBySlug, trackEvent } from "@/lib/queries";
+import { ensureSeeded, getCampaignBySlug, getSiteMedia, trackEvent } from "@/lib/queries";
+import { DEFAULT_COVER } from "@/lib/siteMedia";
 import { businessZone, DAY_NAMES, daysUntil, isOpenNow, money, shortDate, todayHours, type Currency } from "@/lib/money";
 
 export const dynamic = "force-dynamic";
@@ -30,6 +31,7 @@ export async function generateMetadata({ params }: P): Promise<Metadata> {
 
 export default async function CampaignDetail({ params }: P) {
   await ensureSeeded();
+  const fallbackCover = (await getSiteMedia())["home.cover.fallback"]?.url ?? DEFAULT_COVER;
   const { slug } = await params;
   const d = await getCampaignBySlug(slug);
   if (!d || !d.campaign) notFound();
@@ -79,7 +81,7 @@ export default async function CampaignDetail({ params }: P) {
           <div>
             <div className="card overflow-hidden p-0">
               <div className="relative h-[280px] sm:h-[380px]">
-                <img src={c.imageUrl ?? d.business?.coverImage ?? "/images/magaza-ic.jpg"} alt={c.title} className="h-full w-full object-cover" />
+                <img src={c.imageUrl ?? d.business?.coverImage ?? fallbackCover} alt={c.title} className="h-full w-full object-cover" />
                 <div className="absolute inset-0 bg-gradient-to-t from-ink/75 via-ink/10 to-transparent" />
                 <div className="absolute left-5 top-5 flex flex-col items-start gap-2">
                   {c.isSponsored ? <Badge tone="neutral" className="!bg-surface/95">Sponsorlu</Badge> : null}

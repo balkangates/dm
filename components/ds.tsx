@@ -1626,16 +1626,7 @@ export function Journey({
 
 export type StoryScene = { at: string; visual: string; caption: string; image?: string | null };
 
-export function VideoModule({
-  title,
-  durationSec,
-  scenes,
-  captions,
-  lang,
-  onLangChange,
-  poster,
-  steps,
-}: {
+type VideoModuleProps = {
   title: string;
   durationSec: number;
   scenes: StoryScene[];
@@ -1644,7 +1635,145 @@ export function VideoModule({
   onLangChange?: (l: string) => void;
   poster?: string;
   steps?: string[];
-}) {
+  /** Yüklenmiş gerçek video (store-media). Varsa izlenebilir video oynatıcı kullanılır; sahneler video zamanına bağlanır. */
+  videoSrc?: string;
+};
+
+/** Gerçek video + storyboard: sahne/altyazı video zamanına senkron; sahne düğmeleri videoyu o sahneye sarar. */
+function VideoFileModule({ title, durationSec, scenes, captions, lang, onLangChange, poster, steps, videoSrc }: VideoModuleProps & { videoSrc: string }) {
+  const ref = useRef<HTMLVideoElement>(null);
+  const [idx, setIdx] = useState(0);
+  const [dur, setDur] = useState(durationSec);
+  const [showSteps, setShowSteps] = useState(false);
+  const [failed, setFailed] = useState(false);
+  const total = Math.max(1, scenes.length);
+  const perScene = Math.max(0.5, dur / total);
+  const scene = scenes[Math.min(idx, total - 1)];
+  const captionText = captions?.[lang ?? "tr"]?.[idx] ?? scene?.caption ?? "";
+
+  function seekTo(i: number) {
+    const v = ref.current;
+    const next = Math.max(0, Math.min(total - 1, i));
+    setIdx(next);
+    if (v) v.currentTime = Math.min(next * perScene, Math.max(0, (v.duration || dur) - 0.05));
+  }
+
+  return (
+    <div className="card overflow-hidden p-0">
+      <div className="relative aspect-video w-full overflow-hidden bg-ink">
+        {failed ? (
+          <div className="flex h-full items-center justify-center p-6 text-center text-[0.86rem] text-surface/80">
+            Video oynatılamadı (dosya bulunamadı veya tarayıcı biçimi desteklemiyor).
+          </div>
+        ) : (
+          <video
+            ref={ref}
+            src={videoSrc}
+            poster={poster}
+            controls
+            playsInline
+            preload="metadata"
+            className="h-full w-full bg-black object-contain"
+            onLoadedMetadata={(e) => { const d = e.currentTarget.duration; if (Number.isFinite(d) && d > 0) setDur(d); }}
+            onTimeUpdate={(e) => {
+              const t = e.currentTarget.currentTime;
+              const next = Math.min(total - 1, Math.floor(t / perScene));
+              setIdx((p) => (p === next ? p : next));
+            }}
+            onError={() => setFailed(true)}
+          >
+            Tarayıcınız video oynatmayı desteklemiyor.
+          </video>
+        )}
+      </div>
+
+      <div className="border-t-2 border-line px-4 py-3">
+        <div className="flex items-start justify-between gap-3">
+          <span className="border-2 border-line px-2 py-1 text-[0.6rem] font-bold uppercase tracking-[0.16em] text-muted">
+            Storyboard · sahne {idx + 1}/{total}
+          </span>
+          <span className="tabular text-[0.72rem] text-muted">{scene?.at}</span>
+        </div>
+        <p className="mt-2 font-display text-[0.98rem] font-bold leading-snug text-ink">{scene?.visual}</p>
+        {captionText ? <p className="mt-2 border-l-2 border-accent pl-3 text-[0.86rem] leading-relaxed text-ink-700">{captionText}</p> : null}
+      </div>
+
+      <div className="flex flex-wrap items-center gap-2 border-t-2 border-line px-4 py-3">
+        <Button size="sm" variant="ghost" onClick={() => seekTo(idx - 1)} disabled={idx === 0}>Önceki sahne</Button>
+        <Button size="sm" variant="ghost" onClick={() => seekTo(idx + 1)} disabled={idx >= total - 1}>Sonraki sahne</Button>
+        <div className="flex flex-wrap gap-1" role="group" aria-label="Sahneler">
+          {scenes.map((_, i) => (
+            <button
+              key={i}
+              type="button"
+              onClick={() => seekTo(i)}
+              aria-label={`Sahne ${i + 1}`}
+              aria-current={i === idx}
+              className={`h-6 min-w-6 border-2 px-1.5 text-[0.66rem] font-bold tabular ${i === idx ? "border-ink bg-ink text-surface" : "border-line text-muted hover:border-ink-500"}`}
+            >
+              {i + 1}
+            </button>
+          ))}
+        </div>
+        {captions && onLangChange ? (
+          <div className="ml-auto flex items-center gap-1">
+            <span className="text-[0.7rem] uppercase tracking-[0.12em] text-muted">Altyazı</span>
+            {Object.keys(captions).map((l) => (
+              <button
+                key={l}
+                onClick={() => onLangChange(l)}
+                aria-pressed={l === lang}
+                className={`border-2 px-2 py-1 text-[0.68rem] font-bold uppercase ${l === lang ? "border-ink bg-ink text-surface" : "border-line text-muted hover:border-ink-500"}`}
+              >
+                {l}
+              </button>
+            ))}
+          </div>
+        ) : null}
+      </div>
+
+      <div className="border-t-2 border-line-soft px-4 py-3">
+        <button
+          onClick={() => setShowSteps((v) => !v)}
+          aria-expanded={showSteps}
+          className="flex w-full items-center justify-between gap-3 text-left text-[0.82rem] font-semibold text-ink-700 hover:text-accent"
+        >
+          <span className="inline-flex items-center gap-2"><Icon.list size={14} /> Yazılı adım adım anlatım (video alternatifi)</span>
+          <Icon.chevronDown size={14} className={`transition-transform ${showSteps ? "rotate-180" : ""}`} />
+        </button>
+        {showSteps ? (
+          <ol className="mt-3 space-y-2">
+            {(steps ?? scenes.map((s) => `${s.at} — ${s.visual}: ${s.caption}`)).map((st, i) => (
+              <li key={st} className="flex gap-2.5 text-[0.84rem] leading-relaxed text-muted">
+                <span className="tabular shrink-0 font-semibold text-accent">{String(i + 1).padStart(2, "0")}</span>
+                {st}
+              </li>
+            ))}
+          </ol>
+        ) : null}
+        <p className="mt-3 border-t border-dashed border-line pt-3 text-[0.72rem] leading-relaxed text-muted">
+          {title} · Video dosyası oynatılır; sahne ve altyazı video süresine göre eşlenir. Ses otomatik oynatılmaz.
+        </p>
+      </div>
+    </div>
+  );
+}
+
+/** Storyboard modülü: videoSrc varsa izlenebilir video, yoksa animasyonlu storyboard. */
+export function VideoModule(props: VideoModuleProps) {
+  return props.videoSrc ? <VideoFileModule {...props} videoSrc={props.videoSrc} /> : <StoryboardModule {...props} />;
+}
+
+function StoryboardModule({
+  title,
+  durationSec,
+  scenes,
+  captions,
+  lang,
+  onLangChange,
+  poster,
+  steps,
+}: VideoModuleProps) {
   const [playing, setPlaying] = useState(false);
   const [idx, setIdx] = useState(0);
   const [showSteps, setShowSteps] = useState(false);
@@ -1769,8 +1898,8 @@ export function VideoModule({
           </ol>
         ) : null}
         <p className="mt-3 border-t border-dashed border-line pt-3 text-[0.72rem] leading-relaxed text-muted">
-          {title} · Bu modül animasyonlu storyboard ve altyazı gösterir. Gerçek video üretimi/oynatımı bağlı değildir;
-          ses otomatik oynatılmaz.
+          {title} · Bu anlatım için henüz video dosyası yüklenmedi; animasyonlu storyboard ve altyazı gösterilir.
+          Yönetim panelinden video eklendiğinde burada oynatılabilir video olarak görünür. Ses otomatik oynatılmaz.
         </p>
       </div>
     </div>

@@ -8,7 +8,8 @@ import { Badge, Button, Card, Notice, SectionHead } from "@/components/ds";
 import { Icon } from "@/components/icons";
 import { CampaignCardView } from "@/components/discovery";
 import VoiceAssistant from "@/components/voice";
-import { ensureSeeded, getBusinessBySlug, orderCapacityAvailable, trackEvent } from "@/lib/queries";
+import { ensureSeeded, getBusinessBySlug, getSiteMedia, orderCapacityAvailable, trackEvent } from "@/lib/queries";
+import { DEFAULT_COVER } from "@/lib/siteMedia";
 import { businessZone, DAY_NAMES, isOpenNow, money, todayHours, type Currency } from "@/lib/money";
 
 export const dynamic = "force-dynamic";
@@ -30,6 +31,7 @@ export async function generateMetadata({ params }: P): Promise<Metadata> {
 
 export default async function BusinessPage({ params }: P) {
   await ensureSeeded();
+  const fallbackCover = (await getSiteMedia())["home.cover.fallback"]?.url ?? DEFAULT_COVER;
   const { slug } = await params;
   const d = await getBusinessBySlug(slug);
   if (!d) notFound();
@@ -59,7 +61,7 @@ export default async function BusinessPage({ params }: P) {
 
       <section className="relative border-b border-line">
         <div className="relative h-[300px] w-full overflow-hidden sm:h-[380px]">
-          <img src={b.coverImage ?? "/images/magaza-ic.jpg"} alt={b.name} className="h-full w-full object-cover" />
+          <img src={b.coverImage ?? fallbackCover} alt={b.name} className="h-full w-full object-cover" />
           <div className="absolute inset-0 bg-gradient-to-t from-ink via-ink/45 to-transparent" />
           <div className="absolute inset-x-0 bottom-0">
             <div className="mx-auto max-w-[1280px] px-4 pb-7 sm:px-6">
@@ -135,7 +137,7 @@ export default async function BusinessPage({ params }: P) {
                 <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
                   {d.media.map((mm) => (
                     <figure key={mm.id} className="group relative aspect-[4/3] overflow-hidden rounded-[4px] border border-line">
-                      <img src={mm.url ?? "/images/magaza-ic.jpg"} alt={mm.caption ?? b.name} loading="lazy" className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-105" />
+                      <img src={mm.url ?? fallbackCover} alt={mm.caption ?? b.name} loading="lazy" className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-105" />
                       <figcaption className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-ink/85 to-transparent px-3 py-2 text-[0.76rem] text-white">{mm.caption}</figcaption>
                     </figure>
                   ))}

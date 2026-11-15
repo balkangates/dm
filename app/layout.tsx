@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
 import type { ReactNode } from "react";
 import "./globals.css";
+import { FallbackCoverProvider } from "@/components/FallbackCover";
+import { getSiteMedia } from "@/lib/queries";
 
 export const metadata: Metadata = {
   metadataBase: new URL("https://dampingvar.com"),
@@ -25,7 +27,8 @@ export const metadata: Metadata = {
   twitter: { card: "summary_large_image", title: "DampingVar", description: "Alışverişten Önce DampingVar'a Bak." },
 };
 
-export default function RootLayout({ children }: { children: ReactNode }) {
+export default async function RootLayout({ children }: { children: ReactNode }) {
+  const media = await getSiteMedia();
   return (
     <html lang="tr">
       <head>
@@ -36,7 +39,9 @@ export default function RootLayout({ children }: { children: ReactNode }) {
           rel="stylesheet"
         />
       </head>
-      <body className="min-h-screen bg-canvas text-ink antialiased">{children}</body>
+      <body className="min-h-screen bg-canvas text-ink antialiased">
+        <FallbackCoverProvider url={media["home.cover.fallback"]?.url}>{children}</FallbackCoverProvider>
+      </body>
     </html>
   );
 }

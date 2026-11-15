@@ -11,9 +11,11 @@
  *  * Olay/bildirim eklemeleri append-only RLS ile sınırlıdır; hatalar yutulur
  *    (sayfa render'ını engellemez).
  */
+import { cache } from "react";
 import { createClient } from "@/lib/supabase/server";
 import type { BusinessRow, FeeRuleRow, OfferMenu, PackageRow } from "./types";
 import { parseOrderQuota } from "@/lib/orderQuota";
+import { SLOT_BY_KEY, type SiteMediaMap } from "@/lib/siteMedia";
 
 type Row = Record<string, unknown>;
 
@@ -1613,7 +1615,39 @@ export async function listVideos(topic?: string) {
     steps: (v.steps as string[]) ?? [],
     poster: nul(v.poster),
     storagePath: nul(v.storage_path),
+    // store-media/video/… — admin'in yüklediği izlenebilir video (migration 20261115000001).
+    videoUrl: nul(v.video_url),
+    videoPath: nul(v.video_path),
     renderStatus: str(v.render_status),
     status: str(v.status),
   }));
 }
+
+/** Site medyası: slot → yüklenmiş dosya. Tablo/migration yoksa veya hata olursa boş döner
+ *  (sayfa render'ı asla bozulmaz; varsayılan görseller kullanılır). */
+export const getSiteMedia = cache(async (): Promise<SiteMediaMap> => {
+  try {
+    const client = await sb();
+    const { data, error } = await client.from("site_media").select("*");
+    if (error || !data) return {};
+    const out: SiteMediaMap = {};
+    for (const r of data as Row[]) {
+      const key = str(r.slot_key);
+      const slot = SLOT_BY_KEY[key];
+      if (!slot || !str(r.url)) continue;
+      out[key] = {
+        slotKey: key,
+        kind: slot.kind,
+        url: str(r.url),
+        storagePath: str(r.storage_path),
+        alt: nul(r.alt),
+        mimeType: nul(r.mime_type),
+        sizeBytes: r.size_bytes == null ? null : Number(r.size_bytes),
+        updatedAt: iso(r.updated_at),
+      };
+    }
+    return out;
+  } catch {
+    return {};
+  }
+});

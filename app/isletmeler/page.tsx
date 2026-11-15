@@ -4,13 +4,15 @@ import { getLocale } from "@/lib/locale";
 import { PublicShell, type SessionLite } from "@/components/Shell";
 import { Badge, Reveal, SectionHead } from "@/components/ds";
 import { Icon } from "@/components/icons";
-import { ensureSeeded, listBusinesses, listDistricts } from "@/lib/queries";
+import { ensureSeeded, getSiteMedia, listBusinesses, listDistricts } from "@/lib/queries";
+import { DEFAULT_COVER } from "@/lib/siteMedia";
 
 export const dynamic = "force-dynamic";
 export const metadata = { title: "İşletmeler", description: "DampingVar'daki doğrulanmış yerel işletmeler ve markalar." };
 
 export default async function BusinessesPage() {
   await ensureSeeded();
+  const fallbackCover = (await getSiteMedia())["home.cover.fallback"]?.url ?? DEFAULT_COVER;
   const [user, locale, businesses, districts] = await Promise.all([currentUser(), getLocale(), listBusinesses(), listDistricts()]);
   const session: SessionLite = user ? { id: user.id, name: user.name, email: user.email, role: user.role, businessId: user.businessId, referralCode: user.referralCode } : null;
 
@@ -34,7 +36,7 @@ export default async function BusinessesPage() {
             <Reveal key={b.id} delay={i * 45}>
               <Link href={`/isletme/${b.slug}`} className="card hover-lift group overflow-hidden p-0">
                 <div className="relative h-40 overflow-hidden">
-                  <img src={b.coverImage ?? "/images/magaza-ic.jpg"} alt={b.name} loading="lazy" className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-105" />
+                  <img src={b.coverImage ?? fallbackCover} alt={b.name} loading="lazy" className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-105" />
                   <div className="absolute inset-0 bg-gradient-to-t from-ink/60 to-transparent" />
                   <span className="absolute bottom-3 left-3 text-[0.76rem] font-semibold text-white">{b.district}, {b.city}</span>
                 </div>

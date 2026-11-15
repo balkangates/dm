@@ -15,6 +15,8 @@ import {
   type AffNetwork, type AffOffer,
 } from "@/components/affiliateAdmin";
 import { INTEGRATION_LABEL, type IntegrationType } from "@/lib/affiliate";
+import SiteMediaAdmin, { type AdminVideo } from "@/components/SiteMediaAdmin";
+import type { SiteMediaMap } from "@/lib/siteMedia";
 
 export type AdminData = Awaited<ReturnType<typeof getAdminData>>;
 
@@ -23,6 +25,7 @@ export const ADMIN_NAV: NavItem[] = [
   { key: "customers", label: "Müşteriler", icon: <Icon.users size={16} />, group: "Genel" },
   { key: "businesses", label: "İşletmeler ve Markalar", icon: <Icon.store size={16} />, group: "Genel" },
   { key: "moderation", label: "Kampanya Moderasyonu", icon: <Icon.shield size={16} />, group: "İçerik", badge: 0 },
+  { key: "siteMedia", label: "Site Görsel ve Video", icon: <Icon.video size={16} />, group: "İçerik" },
   { key: "qr", label: "QR Etkinliği", icon: <Icon.qr size={16} />, group: "İçerik" },
   { key: "referrals", label: "Yönlendirme İzleme", icon: <Icon.share size={16} />, group: "İçerik" },
   { key: "bonusRules", label: "Damping Bonus Kuralları", icon: <Icon.bonus size={16} />, group: "İçerik" },
@@ -391,7 +394,7 @@ function AdminMedia({ businessId }: { businessId: string }) {
   );
 }
 
-export default function AdminDashboard({ data, lang, currency, section, affiliate }: { data: AdminData; lang: Lang; currency: Currency; section: string; affiliate: AffiliateData }) {
+export default function AdminDashboard({ data, lang, currency, section, affiliate, media = {}, videos = [] }: { data: AdminData; lang: Lang; currency: Currency; section: string; affiliate: AffiliateData; media?: SiteMediaMap; videos?: AdminVideo[] }) {
   const toast = useToast();
   const [confirm, setConfirm] = useState<null | { title: string; desc: string; run: () => Promise<void> }>(null);
   const [page, setPage] = useState(1);
@@ -547,6 +550,8 @@ export default function AdminDashboard({ data, lang, currency, section, affiliat
         </span></Td></tr>))}</tbody></Table>
     <ConfirmDialog confirm={confirm} onClose={() => setConfirm(null)} />
   </Wrap>;
+
+  if (section === "siteMedia") return <SiteMediaAdmin media={media} videos={videos} />;
 
   if (section === "qr") return <Wrap title="QR etkinliği" desc="Okutma, doğrulamaya gönderme ve doğrulanmış kullanım ayrı olaylardır.">
     <div className="mb-5 grid gap-4 sm:grid-cols-4">

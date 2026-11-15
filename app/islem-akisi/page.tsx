@@ -69,7 +69,7 @@ export default async function FlowPage() {
           <PaperHead
             eyebrow="Video anlatım"
             title="Akışları 18 saniyede anlayın"
-            note="Animasyonlu storyboard ve altyazı. Gerçek video üretimi/oynatımı bağlı değildir; her videonun yazılı adım adım alternatifi vardır."
+            note="Yüklenmiş videolar oynatılır; yüklenmemiş anlatımlar animasyonlu storyboard ve altyazı olarak gösterilir. Her videonun yazılı adım adım alternatifi vardır."
           />
           {howItWorks ? (
             <VideoLibrary videos={[howItWorks, ...(videos.filter((v) => v.id !== howItWorks.id).slice(0, 2))]} lang={locale.lang} compact />

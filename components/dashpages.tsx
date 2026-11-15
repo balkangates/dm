@@ -6,18 +6,22 @@ import CustomerDashboard, { CUSTOMER_NAV } from "@/components/customer";
 import BusinessDashboard, { BUSINESS_NAV } from "@/components/business";
 import AdminDashboard, { ADMIN_NAV } from "@/components/admin";
 import type { SessionLite } from "@/components/Shell";
+import { PanelMedia } from "@/components/SiteMedia";
+import type { SiteMediaMap } from "@/lib/siteMedia";
+import type { AdminVideo } from "@/components/SiteMediaAdmin";
 import type { CampaignCard } from "@/lib/queries";
 import type { Currency, Lang } from "@/lib/money";
 
 type Loc = { lang: Lang; currency: Currency; country: string };
 
-export function CustomerDash({ user, data, campaigns, locale, initial, offers = [] }: {
+export function CustomerDash({ user, data, campaigns, locale, initial, offers = [], media = {} }: {
   user: NonNullable<SessionLite>;
   data: Awaited<ReturnType<typeof import("@/lib/queries").getCustomerData>>;
   campaigns: CampaignCard[];
   locale: Loc;
   initial: string;
   offers?: import("@/lib/queries").OfferCard[];
+  media?: SiteMediaMap;
 }) {
   return (
     <ToastProvider>
@@ -27,7 +31,7 @@ export function CustomerDash({ user, data, campaigns, locale, initial, offers = 
         locale={locale}
         user={user}
         variant="customer"
-        render={(s) => <CustomerDashboard data={data} campaigns={campaigns} user={user} lang={locale.lang} currency={locale.currency} section={s} offers={offers} />}
+        render={(s) => (<>{s === "overview" ? <PanelMedia media={media} area="customer" /> : null}<CustomerDashboard data={data} campaigns={campaigns} user={user} lang={locale.lang} currency={locale.currency} section={s} offers={offers} /></>)}
         titles={{
           overview: ["Hesabım", "Kampanyaların, davetlerin ve mağazaya bağlı bonus hakların"],
           discover: ["Kampanyaları keşfet", "Konum ve kategoriye göre filtrele"],
@@ -42,13 +46,14 @@ export function CustomerDash({ user, data, campaigns, locale, initial, offers = 
   );
 }
 
-export function BusinessDash({ user, data, locale, initial, videos = [], range = 14 }: {
+export function BusinessDash({ user, data, locale, initial, videos = [], range = 14, media = {} }: {
   user: NonNullable<SessionLite>;
   data: NonNullable<Awaited<ReturnType<typeof import("@/lib/queries").getBusinessData>>>;
   locale: Loc;
   initial: string;
   videos?: import("@/components/business").StudioVideo[];
   range?: number;
+  media?: SiteMediaMap;
 }) {
   return (
     <ToastProvider>
@@ -59,7 +64,7 @@ export function BusinessDash({ user, data, locale, initial, videos = [], range =
         user={user}
         variant="business"
         businessName={data.biz.name}
-        render={(s) => <BusinessDashboard data={data} lang={locale.lang} currency={locale.currency} section={s} videos={videos} range={range} />}
+        render={(s) => (<>{s === "overview" || s === "studio" ? <PanelMedia media={media} area="business" /> : null}<BusinessDashboard data={data} lang={locale.lang} currency={locale.currency} section={s} videos={videos} range={range} /></>)}
         titles={{
           overview: ["Genel bakış", "Ölçülen olaylar: gösterim, tıklama, ziyaret, QR okutma, doğrulanmış kullanım"],
           profile: ["İşletme profili", ""], campaigns: ["Kampanyalar", ""], qr: ["QR kampanyaları", ""],
@@ -73,12 +78,14 @@ export function BusinessDash({ user, data, locale, initial, videos = [], range =
   );
 }
 
-export function AdminDash({ user, data, locale, initial, affiliate }: {
+export function AdminDash({ user, data, locale, initial, affiliate, media = {}, videos = [] }: {
   user: NonNullable<SessionLite>;
   data: Awaited<ReturnType<typeof import("@/lib/queries").getAdminData>>;
   locale: Loc;
   initial: string;
   affiliate: Awaited<ReturnType<typeof import("@/lib/queries").getAffiliateData>>;
+  media?: SiteMediaMap;
+  videos?: AdminVideo[];
 }) {
   return (
     <ToastProvider>
@@ -89,10 +96,10 @@ export function AdminDash({ user, data, locale, initial, affiliate }: {
         user={user}
         variant="admin"
         businessName="DampingVar Platform"
-        render={(s) => <AdminDashboard data={data} lang={locale.lang} currency={locale.currency} section={s} affiliate={affiliate} />}
+        render={(s) => <AdminDashboard data={data} lang={locale.lang} currency={locale.currency} section={s} affiliate={affiliate} media={media} videos={videos} />}
         titles={{
           overview: ["Platform özeti", ""], customers: ["Müşteriler", ""], businesses: ["İşletmeler ve markalar", ""],
-          moderation: ["Kampanya moderasyonu", ""], qr: ["QR etkinliği", ""], referrals: ["Yönlendirme izleme", ""],
+          moderation: ["Kampanya moderasyonu", ""], siteMedia: ["Site görsel ve video", "Anasayfa, müşteri ve işletme paneli · store-media"], qr: ["QR etkinliği", ""], referrals: ["Yönlendirme izleme", ""],
           bonusRules: ["Damping Bonus kuralları", ""], ads: ["Reklam paketleri", ""], ai: ["AI pazarlama hizmetleri", ""],
           fees: ["Hizmet bedelleri", ""], invoices: ["Faturalar", ""], statement: ["Hesap ekstresi", ""], balances: ["Hesap bakiyeleri", ""], analytics: ["Analitik", ""],
           reports: ["Raporlar", "CSV dışa aktarım · hizmet geliri ile müşteri indirimleri ayrı"],

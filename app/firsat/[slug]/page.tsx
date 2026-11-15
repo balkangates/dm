@@ -9,7 +9,8 @@ import {
 } from "@/components/ds";
 import { Icon } from "@/components/icons";
 import { OfferCardView, OutboundCta } from "@/components/offers";
-import { bumpOfferImpressions, ensureSeeded, getOfferBySlug, trackEvent } from "@/lib/queries";
+import { bumpOfferImpressions, ensureSeeded, getOfferBySlug, getSiteMedia, trackEvent } from "@/lib/queries";
+import { DEFAULT_COVER } from "@/lib/siteMedia";
 import { videoEmbed } from "@/lib/affiliate";
 import { daysUntil, money, relative, shortDate, type Currency } from "@/lib/money";
 
@@ -29,6 +30,7 @@ export async function generateMetadata({ params }: P): Promise<Metadata> {
 
 export default async function OfferDetail({ params }: P) {
   await ensureSeeded();
+  const fallbackCover = (await getSiteMedia())["home.cover.fallback"]?.url ?? DEFAULT_COVER;
   const { slug } = await params;
   const d = await getOfferBySlug(slug);
   if (!d) notFound();
@@ -63,7 +65,7 @@ export default async function OfferDetail({ params }: P) {
           <div>
             <div className="card overflow-hidden p-0">
               <div className="relative h-[260px] sm:h-[360px]">
-                <img src={o.imageUrl ?? "/images/magaza-ic.jpg"} alt={o.title} className="h-full w-full object-cover" />
+                <img src={o.imageUrl ?? fallbackCover} alt={o.title} className="h-full w-full object-cover" />
                 <div className="absolute inset-0 bg-gradient-to-t from-ink/80 via-ink/20 to-transparent" />
                 <div className="absolute left-4 top-4 flex flex-wrap gap-2">
                   {o.isSample ? <Stamp tone="warning">Örnek içerik</Stamp> : null}

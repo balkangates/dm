@@ -68,7 +68,7 @@ export function FinancialBoundary({ mode }: { mode: ViewMode }) {
 /* ----------------------------- MÜŞTERİ MODU --------------------------- */
 
 export function CustomerHome({
-  lang, campaigns, businesses, categories, districts, offers, brands, videos,
+  lang, campaigns, businesses, categories, districts, offers, brands, videos, fallbackCover, howVideoFile,
 }: {
   lang: Lang;
   campaigns: Campaigns;
@@ -78,6 +78,10 @@ export function CustomerHome({
   offers: Offers;
   brands: Brand[];
   videos: Videos;
+  /** Admin'in yüklediği varsayılan kapak (yoksa paket içi görsel). */
+  fallbackCover: string;
+  /** Admin'in “Nasıl çalışır” slotuna yüklediği video (storyboard kaydının kendi videosu yoksa kullanılır). */
+  howVideoFile?: string | null;
 }) {
   const howVideo = videos.find((v) => v.topic === "HOW_DAMPINGVAR_WORKS") ?? videos[0];
   const featured = campaigns.filter((c) => c.isSponsored).slice(0, 6);
@@ -128,7 +132,7 @@ export function CustomerHome({
           {businesses.slice(0, 6).map((b, i) => (
             <Reveal key={b.id} delay={i * 45}>
               <Link href={`/isletme/${b.slug}`} className="card hover-lift group flex gap-4 p-4">
-                <img src={b.coverImage ?? "/images/magaza-ic.jpg"} alt="" className="h-20 w-20 shrink-0 rounded-[3px] object-cover" />
+                <img src={b.coverImage ?? fallbackCover} alt="" className="h-20 w-20 shrink-0 rounded-[3px] object-cover" />
                 <div className="min-w-0">
                   <div className="flex items-center gap-1.5">
                     <p className="truncate font-display text-[1rem] font-bold">{b.name}</p>
@@ -198,6 +202,7 @@ export function CustomerHome({
                 lang={lang}
                 poster={howVideo.poster ?? undefined}
                 steps={howVideo.steps}
+                videoSrc={howVideo.videoUrl ?? howVideoFile ?? undefined}
               />
               <div className="space-y-4">
                 <Card>
@@ -216,8 +221,8 @@ export function CustomerHome({
                 <Card>
                   <p className="text-[0.72rem] font-bold uppercase tracking-[0.14em] text-accent">Video anlatımlar</p>
                   <p className="mt-2 text-[0.88rem] leading-relaxed text-muted">
-                    10 kısa storyboard anlatımı; TR/EN/KA altyazı (çevirisi olanlarda) ve yazılı adım alternatifi.
-                    Gerçek video üretimi bağlı değil — bu açıkça etiketlenir.
+                    Kısa storyboard anlatımları; yüklenmiş olanlar video olarak oynatılır. TR/EN/KA altyazı
+                    (çevirisi olanlarda) ve yazılı adım alternatifi her anlatımda bulunur.
                   </p>
                   <Button href="/videolar" variant="secondary" className="mt-4" size="sm" icon={<Icon.video size={14} />}>
                     Video kütüphanesi
@@ -278,7 +283,7 @@ export function CustomerHome({
           {newest.map((c, i) => (
             <Reveal key={c.id} delay={i * 55}>
               <Link href={`/kampanya/${c.slug ?? c.code}`} className="card hover-lift flex gap-4 p-4">
-                <img src={c.imageUrl ?? c.coverImage ?? "/images/magaza-ic.jpg"} alt="" className="h-20 w-20 shrink-0 rounded-[3px] object-cover" />
+                <img src={c.imageUrl ?? c.coverImage ?? fallbackCover} alt="" className="h-20 w-20 shrink-0 rounded-[3px] object-cover" />
                 <span className="min-w-0">
                   <span className="flex items-center gap-2">
                     <Badge tone="positive">yeni</Badge>

@@ -14,6 +14,7 @@ export type VideoItem = {
   captions: Record<string, string[]>;
   steps: string[];
   poster: string | null;
+  videoUrl?: string | null;
   renderStatus: string;
   status: string;
 };
@@ -35,7 +36,7 @@ function Inner({ videos, lang, compact }: { videos: VideoItem[]; lang: Lang; com
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ kind: "video_played", meta: { topic: v.topic } }),
     }).catch(() => undefined);
-    toast.push({ title: v.title, desc: "Storyboard başlatıldı (demo oynatıcı).", tone: "neutral" });
+    toast.push({ title: v.title, desc: v.videoUrl ? "Video hazır — oynat düğmesine basın." : "Storyboard başlatıldı (video dosyası henüz yüklenmedi).", tone: "neutral" });
   }
 
   if (!active) return null;
@@ -52,13 +53,15 @@ function Inner({ videos, lang, compact }: { videos: VideoItem[]; lang: Lang; com
           onLangChange={setCaptionLang}
           poster={active.poster ?? undefined}
           steps={active.steps}
+          videoSrc={active.videoUrl ?? undefined}
         />
         <div className="mt-3 flex flex-wrap items-center gap-2 text-[0.76rem] text-muted">
           <span className="border-2 border-line bg-surface px-2 py-1 font-bold uppercase tracking-[0.1em]">
             render: {active.renderStatus}
           </span>
           <span className="inline-flex items-center gap-1.5">
-            <Icon.info size={13} /> Gerçek video dosyası üretilmedi; storyboard ve altyazı gösterilir.
+            <Icon.info size={13} />
+            {active.videoUrl ? "Video dosyası oynatılır; sahne ve altyazı video süresine göre eşlenir." : "Bu anlatım için video dosyası yüklenmedi; animasyonlu storyboard ve altyazı gösterilir."}
           </span>
         </div>
       </div>
@@ -88,7 +91,7 @@ function Inner({ videos, lang, compact }: { videos: VideoItem[]; lang: Lang; com
                   <span className="min-w-0 flex-1">
                     <span className="block text-[0.88rem] font-semibold leading-snug text-ink">{v.title}</span>
                     <span className="tabular mt-1 block text-[0.72rem] text-muted">
-                      {v.durationSec} sn · {v.scenes.length} sahne · altyazı {langs.map((l) => l.toUpperCase()).join(" / ")}
+                      {v.videoUrl ? "▶ video · " : ""}{v.durationSec} sn · {v.scenes.length} sahne · altyazı {langs.map((l) => l.toUpperCase()).join(" / ")}
                     </span>
                   </span>
                 </button>

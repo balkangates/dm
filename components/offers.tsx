@@ -6,6 +6,7 @@ import { Badge, Button, Card, Chip, Dialog, EmptyState, Icon, Notice, SkeletonCa
 import { Icon as IconSafe } from "@/components/icons";
 import { daysUntil, money, relative, shortDate, type Currency, type Lang } from "@/lib/money";
 import type { OfferCard as OfferCardType } from "@/lib/queries";
+import { useFallbackCover } from "@/components/FallbackCover";
 
 /* ------------------------------------------------------------------ *
  * DIŞ SATICIYA ÇIKIŞ: izlenen tıklama + ayrılış onayı
@@ -151,6 +152,7 @@ export function OfferCardView({
   saved?: boolean;
   onToggleSave?: (id: string, next: boolean) => void;
 }) {
+  const fallbackCover = useFallbackCover();
   const left = daysUntil(o.endsAt);
   const href = `/firsat/${o.slug}`;
 
@@ -158,7 +160,7 @@ export function OfferCardView({
     <article className={`card hover-lift group flex overflow-hidden p-0 ${layout === "list" ? "flex-col sm:flex-row" : "flex-col"}`}>
       <div className={`relative overflow-hidden ${layout === "list" ? "h-40 sm:h-auto sm:w-52" : "h-40"}`}>
         <img
-          src={o.imageUrl ?? "/images/magaza-ic.jpg"}
+          src={o.imageUrl ?? fallbackCover}
           alt={`${o.merchant} — ${o.title}`}
           loading="lazy"
           className="h-full w-full object-cover transition-transform duration-[600ms] ease-out group-hover:scale-[1.06]"

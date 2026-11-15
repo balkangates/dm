@@ -17,6 +17,7 @@ import { generateAdVariants, generateSocial, generateStory, generateVideoScript,
 import { growthAlternative, growthTaskTemplate, type ExistingRec, type GrowthExtras, type GrowthPlan } from "@/lib/growth";
 import { validateCampaignPayload } from "@/lib/campaignRules";
 import { geminiDiagnostics } from "@/lib/aiGemini";
+import { SLOT_BY_KEY, STORE_BUCKET, storePathOfUrl, urlMatchesStorePath, validStorePath } from "@/lib/siteMedia";
 
 type Row = Record<string, unknown>;
 
@@ -1028,10 +1029,17 @@ export async function businessAction(actor: BusinessActorLite, body: Row) {
   throw new ActionError(400, "Bilinmeyen işlem.");
 }
 
+/** store-media nesnesini en iyi çabayla siler (kayıt zaten güncellendi; dosya artığı kullanıcıyı kilitlemesin). */
+async function removeStoreObject(client: Awaited<ReturnType<typeof sb>>, path: string | null) {
+  if (!path) return;
+  await client.storage.from(STORE_BUCKET).remove([path]).catch(() => undefined);
+}
+
 /* ================================================================== *
  * ADMİN (/api/admin) — RLS: yalnızca is_admin() satırlara dokunabilir
  * ================================================================== */
 
+const nulStr = (v: unknown): string | null => (v == null || v === "" ? null : String(v));
 const clampInt = (v: unknown, min: number, max: number) => Math.max(min, Math.min(max, Math.round(Number(v ?? 0)) || 0));
 
 export async function adminAction(user: SessionUserLite, body: Row) {
@@ -1200,6 +1208,89 @@ export async function adminAction(user: SessionUserLite, body: Row) {
       if (image && !image.includes("/object/public/business-media/")) throw new ActionError(400, "Geçersiz görsel adresi.");
       await setSceneImage(client, videoId, index, image);
       await logAudit(user.email, "ADMIN", "SCENE_IMAGE_SET", "video_assets", videoId, { index, image: Boolean(image) });
+      return Response.json({ ok: true });
+    }
+
+    /* ---------- Site medyası (store-media: image/ · video/) ---------- */
+
+    case "site_media_set": {
+      // Tarayıcı dosyayı store-media'ya yükledi (admin RLS); burada slot kaydı yazılır (yükle/değiştir).
+      const slotKey = String(body.slotKey ?? "");
+      const slot = SLOT_BY_KEY[slotKey];
+      if (!slot) throw new ActionError(400, "Geçersiz medya alanı.");
+      const storagePath = String(body.storagePath ?? "");
+      const url = String(body.url ?? "");
+      if (!validStorePath(slot.kind, storagePath) || !urlMatchesStorePath(url, storagePath))
+        throw new ActionError(400, "Geçersiz dosya yolu.");
+      const { data: old } = await client.from("site_media").select("storage_path").eq("slot_key", slotKey).maybeSingle();
+      const { error } = await client.from("site_media").upsert({
+        slot_key: slotKey,
+        kind: slot.kind,
+        storage_path: storagePath,
+        url,
+        alt: String(body.alt ?? "").trim().slice(0, 160) || null,
+        mime_type: String(body.mimeType ?? "").slice(0, 80) || null,
+        size_bytes: Number.isFinite(Number(body.sizeBytes)) ? Math.max(0, Math.trunc(Number(body.sizeBytes))) : null,
+        updated_at: new Date().toISOString(),
+        updated_by: user.email,
+      });
+      if (error) fail(error);
+      const oldPath = old ? str(old.storage_path) : "";
+      if (oldPath && oldPath !== storagePath) await removeStoreObject(client, oldPath);
+      await logAudit(user.email, "ADMIN", old ? "SITE_MEDIA_REPLACED" : "SITE_MEDIA_SET", "site_media", slotKey, { storagePath });
+      return Response.json({ ok: true });
+    }
+
+    case "site_media_clear": {
+      const slotKey = String(body.slotKey ?? "");
+      if (!SLOT_BY_KEY[slotKey]) throw new ActionError(400, "Geçersiz medya alanı.");
+      const { data: old } = await client.from("site_media").select("storage_path").eq("slot_key", slotKey).maybeSingle();
+      if (!old) throw new ActionError(404, "Bu alanda yüklü dosya yok.");
+      const { error } = await client.from("site_media").delete().eq("slot_key", slotKey);
+      if (error) fail(error);
+      await removeStoreObject(client, str(old.storage_path));
+      await logAudit(user.email, "ADMIN", "SITE_MEDIA_DELETED", "site_media", slotKey, {});
+      return Response.json({ ok: true });
+    }
+
+    case "storyboard_media_set": {
+      // Storyboard kaydına izlenebilir video (kind=video) veya kapak görseli (kind=poster) ekler/değiştirir.
+      const videoId = String(body.videoId ?? "");
+      if (!MEDIA_UUID_RE.test(videoId)) throw new ActionError(400, "Geçersiz video kimliği.");
+      const which = body.kind === "poster" ? "poster" : "video";
+      const storagePath = String(body.storagePath ?? "");
+      const url = String(body.url ?? "");
+      if (!validStorePath(which === "poster" ? "image" : "video", storagePath) || !urlMatchesStorePath(url, storagePath))
+        throw new ActionError(400, "Geçersiz dosya yolu.");
+      const { data: old } = await client.from("video_assets").select("id, poster, video_url, video_path").eq("id", videoId).maybeSingle();
+      if (!old) throw new ActionError(404, "Video kaydı bulunamadı.");
+      const patch: Row =
+        which === "poster"
+          ? { poster: url, poster_path: storagePath }
+          : { video_url: url, video_path: storagePath, render_status: "RENDERED" };
+      const { error } = await client.from("video_assets").update(patch).eq("id", videoId);
+      if (error) fail(error);
+      const prev = which === "poster" ? storePathOfUrl(nulStr(old.poster)) : str(old.video_path) || storePathOfUrl(nulStr(old.video_url));
+      if (prev && prev !== storagePath) await removeStoreObject(client, prev);
+      await logAudit(user.email, "ADMIN", which === "poster" ? "STORYBOARD_POSTER_SET" : "STORYBOARD_VIDEO_SET", "video_assets", videoId, { storagePath });
+      return Response.json({ ok: true });
+    }
+
+    case "storyboard_media_clear": {
+      const videoId = String(body.videoId ?? "");
+      if (!MEDIA_UUID_RE.test(videoId)) throw new ActionError(400, "Geçersiz video kimliği.");
+      const which = body.kind === "poster" ? "poster" : "video";
+      const { data: old } = await client.from("video_assets").select("id, poster, video_url, video_path").eq("id", videoId).maybeSingle();
+      if (!old) throw new ActionError(404, "Video kaydı bulunamadı.");
+      const prev = which === "poster" ? storePathOfUrl(nulStr(old.poster)) : str(old.video_path) || storePathOfUrl(nulStr(old.video_url));
+      const patch: Row =
+        which === "poster"
+          ? { poster: null, poster_path: null }
+          : { video_url: null, video_path: null, render_status: "NOT_RENDERED" };
+      const { error } = await client.from("video_assets").update(patch).eq("id", videoId);
+      if (error) fail(error);
+      await removeStoreObject(client, prev);
+      await logAudit(user.email, "ADMIN", which === "poster" ? "STORYBOARD_POSTER_CLEARED" : "STORYBOARD_VIDEO_CLEARED", "video_assets", videoId, {});
       return Response.json({ ok: true });
     }
     case "business_plan": {

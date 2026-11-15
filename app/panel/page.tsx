@@ -1,6 +1,6 @@
 import { redirect } from "next/navigation";
 import { getSessionUser } from "@/lib/authz";
-import { getBusinessData, listBusinesses, listVideos } from "@/lib/queries";
+import { getBusinessData, getSiteMedia, listBusinesses, listVideos } from "@/lib/queries";
 import { getLocale } from "@/lib/locale";
 import { BusinessDash } from "@/components/dashpages";
 import { PublicShell, type SessionLite } from "@/components/Shell";
@@ -43,9 +43,10 @@ export default async function PanelPage({
   // oluşurdu. Panel içindeki !data bloğu (aşağıda) bu durumu terminal olarak gösterir.
 
   const range = [7, 14, 30].includes(Number(sp.gun)) ? Number(sp.gun) : 14;
-  const [data, videos] = await Promise.all([
+  const [data, videos, media] = await Promise.all([
     businessId ? getBusinessData(businessId, range) : Promise.resolve(null),
     listVideos(),
+    getSiteMedia(),
   ]);
   if (!data) {
     // Çevrim engeli (FAZ 9 canlı testi): /giris'e yönlendirme girişli kullanıcıyı
@@ -90,6 +91,7 @@ export default async function PanelPage({
       data={data}
       locale={locale}
       videos={videos}
+      media={media}
       range={range}
       initial={typeof sp.s === "string" ? sp.s : "overview"}
     />

@@ -15,6 +15,7 @@ import { money, relative, shortDate, type Currency, type Lang } from "@/lib/mone
 import type { CampaignCard } from "@/lib/queries";
 import type { SessionLite } from "@/components/Shell";
 import { getBrowserSupabase } from "@/lib/supabase/client";
+import { useFallbackCover } from "@/components/FallbackCover";
 
 export type CustomerData = Awaited<ReturnType<typeof import("@/lib/queries").getCustomerData>>;
 
@@ -44,6 +45,7 @@ export default function CustomerDashboard({
 }) {
   const t = makeT(lang);
   const toast = useToast();
+  const fallbackCover = useFallbackCover();
   const [local, setLocal] = useState(data);
 
   // FAZ 11 — Gerçek zamanlı bildirimler: yalnızca KENDİ bildirim satırlarınız
@@ -230,7 +232,7 @@ export default function CustomerDashboard({
               <ul className="mt-3 space-y-2.5">
                 {offers.slice(0, 3).map((o) => (
                   <li key={o.id} className="flex items-center gap-3 border-b border-line-soft pb-2.5 last:border-0">
-                    <img src={o.imageUrl ?? "/images/magaza-ic.jpg"} alt="" className="h-10 w-10 shrink-0 rounded-[3px] object-cover" />
+                    <img src={o.imageUrl ?? fallbackCover} alt="" className="h-10 w-10 shrink-0 rounded-[3px] object-cover" />
                     <span className="min-w-0 flex-1">
                       <span className="block truncate text-[0.85rem] font-medium text-ink">{o.title}</span>
                       <span className="block truncate text-[0.74rem] text-muted">{o.merchant} · {o.category}</span>
@@ -266,7 +268,7 @@ export default function CustomerDashboard({
                 {local.recentlyViewed.map((b) => (
                   <li key={b.id}>
                     <Link href={`/isletme/${b.slug}`} className="flex items-center gap-3 rounded-[3px] p-1.5 hover:bg-canvas">
-                      <img src={b.coverImage ?? "/images/magaza-ic.jpg"} alt="" className="h-10 w-10 rounded-[3px] object-cover" />
+                      <img src={b.coverImage ?? fallbackCover} alt="" className="h-10 w-10 rounded-[3px] object-cover" />
                       <span className="min-w-0 flex-1">
                         <span className="block truncate text-[0.85rem] font-medium text-ink">{b.name}</span>
                         <span className="block text-[0.74rem] text-muted">{b.district} · {b.category}</span>
@@ -342,7 +344,7 @@ export default function CustomerDashboard({
         <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
           {local.businesses.filter((b) => b.followed).map((b) => (
             <Card key={b.id} className="hover-lift p-0">
-              <img src={b.coverImage ?? "/images/magaza-ic.jpg"} alt="" className="h-32 w-full rounded-t-[3px] object-cover" />
+              <img src={b.coverImage ?? fallbackCover} alt="" className="h-32 w-full rounded-t-[3px] object-cover" />
               <div className="p-4">
                 <Link href={`/isletme/${b.slug}`} className="font-display text-[1rem] font-bold hover:text-accent">{b.name}</Link>
                 <p className="mt-1 text-[0.8rem] text-muted">{b.district}, {b.city} · {b.category}</p>

@@ -6,6 +6,7 @@ import { Badge, Button, Chip, EmptyState, Icon, IconButton, SkeletonCard, useToa
 import { makeT } from "@/lib/i18n";
 import { daysUntil, money, shortDate, type Currency, type Lang } from "@/lib/money";
 import type { CampaignCard } from "@/lib/queries";
+import { useFallbackCover } from "@/components/FallbackCover";
 
 export function discountLabel(c: { type: string; discountPercent: number; discountAmountCents: number; currency: string }, lang: Lang) {
   if (c.type === "FIXED" || c.type === "PRODUCT") {
@@ -30,11 +31,12 @@ export function CampaignCardView({
   compact?: boolean;
 }) {
   const t = makeT(lang);
+  const fallbackCover = useFallbackCover();
   const href = `/kampanya/${c.slug ?? c.code}`;
   const left = daysUntil(c.endsAt);
   const expiringSoon = left !== null && left >= 0 && left <= 5;
   const expired = left !== null && left < 0;
-  const image = c.imageUrl ?? c.coverImage ?? "/images/magaza-ic.jpg";
+  const image = c.imageUrl ?? c.coverImage ?? fallbackCover;
 
   const body = (
     <>
@@ -396,6 +398,7 @@ export function DiscoverySkeleton() {
 }
 
 export function SponsoredStrip({ items, lang }: { items: CampaignCard[]; lang: Lang }) {
+  const fallbackCover = useFallbackCover();
   if (!items.length) return null;
   return (
     <div className="no-scrollbar -mx-4 flex gap-4 overflow-x-auto px-4 pb-2 sm:mx-0 sm:px-0">
@@ -405,7 +408,7 @@ export function SponsoredStrip({ items, lang }: { items: CampaignCard[]; lang: L
           href={`/kampanya/${c.slug ?? c.code}`}
           className="card hover-lift group flex w-[300px] shrink-0 items-center gap-3 p-3"
         >
-          <img src={c.imageUrl ?? c.coverImage ?? "/images/magaza-ic.jpg"} alt="" className="h-16 w-16 rounded-[3px] object-cover" />
+          <img src={c.imageUrl ?? c.coverImage ?? fallbackCover} alt="" className="h-16 w-16 rounded-[3px] object-cover" />
           <div className="min-w-0 flex-1">
             <Badge tone="neutral" className="mb-1">
               {lang === "en" ? "Sponsored" : "Sponsorlu"}

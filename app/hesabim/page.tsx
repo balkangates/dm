@@ -1,6 +1,6 @@
 import { redirect } from "next/navigation";
 import { getSessionUser } from "@/lib/authz";
-import { getCustomerData, listCampaignCards, listOffers } from "@/lib/queries";
+import { getCustomerData, getSiteMedia, listCampaignCards, listOffers } from "@/lib/queries";
 import { getLocale } from "@/lib/locale";
 import { CustomerDash } from "@/components/dashpages";
 
@@ -25,10 +25,11 @@ export default async function AccountPage({
 
   const sp = await searchParams;
   const locale = await getLocale();
-  const [data, campaigns, offers] = await Promise.all([
+  const [data, campaigns, offers, media] = await Promise.all([
     getCustomerData(user.id),
     listCampaignCards({ limit: 12, district: user.district ?? undefined }),
     listOffers({ limit: 6 }),
+    getSiteMedia(),
   ]);
 
   return (
@@ -44,6 +45,7 @@ export default async function AccountPage({
       data={data}
       campaigns={campaigns}
       offers={offers}
+      media={media}
       locale={locale}
       initial={typeof sp.s === "string" ? sp.s : "overview"}
     />

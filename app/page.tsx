@@ -10,8 +10,10 @@ import {
   BusinessFlowPanel, BusinessHome, CustomerHome, FinancialBoundary, ModeTicker, type Brand,
 } from "@/components/HomeModes";
 import {
-  bumpOfferImpressions, ensureSeeded, listBusinesses, listCampaignCards, listCategories, listDistricts, listOffers, listVideos,
+  bumpOfferImpressions, ensureSeeded, listBusinesses, listCampaignCards, listCategories, listDistricts, listOffers, listVideos, getSiteMedia,
 } from "@/lib/queries";
+import { HeroBackdrop } from "@/components/SiteMedia";
+import { DEFAULT_COVER } from "@/lib/siteMedia";
 import { makeT } from "@/lib/i18n";
 import { num } from "@/lib/money";
 import { MODE_PARAM, resolveViewMode } from "@/lib/viewMode";
@@ -33,7 +35,8 @@ function searchString(sp: SP): string {
 export default async function HomePage({ searchParams }: { searchParams: Promise<SP> }) {
   const sp = await searchParams;
   await ensureSeeded();
-  const [user, locale] = await Promise.all([currentUser(), getLocale()]);
+  const [user, locale, media] = await Promise.all([currentUser(), getLocale(), getSiteMedia()]);
+  const fallbackCover = media["home.cover.fallback"]?.url ?? DEFAULT_COVER;
 
   // Öncelik: URL (?mod=) > oturum rolü > varsayılan müşteri.
   const mode = resolveViewMode({ param: sp[MODE_PARAM], role: user?.role });
@@ -65,6 +68,7 @@ export default async function HomePage({ searchParams }: { searchParams: Promise
     <PublicShell user={session} lang={locale.lang} currency={locale.currency} country={locale.country}>
       {/* ------------------------------- HERO ------------------------------- */}
       <section className="relative overflow-hidden border-b border-line bg-ink text-white">
+        <HeroBackdrop media={media} imageKey={isBusiness ? "home.hero.business" : "home.hero.customer"} />
         <div className="grain absolute inset-0" />
         <div className="hero-grid absolute inset-0" />
         <div className="relative mx-auto max-w-[1280px] px-4 py-14 sm:px-6 lg:py-20">
@@ -132,7 +136,7 @@ export default async function HomePage({ searchParams }: { searchParams: Promise
                   style={{ top: i * 92, left: i * 34, transform: `rotate(${i === 1 ? 2.4 : i === 2 ? -1.8 : -3.2}deg)`, zIndex: 10 - i }}
                 >
                   <div className="flex gap-3 p-3">
-                    <img src={c.imageUrl ?? c.coverImage ?? "/images/magaza-ic.jpg"} alt="" className="h-20 w-20 shrink-0 rounded-[3px] object-cover" />
+                    <img src={c.imageUrl ?? c.coverImage ?? fallbackCover} alt="" className="h-20 w-20 shrink-0 rounded-[3px] object-cover" />
                     <div className="min-w-0">
                       <p className="truncate text-[0.74rem] font-semibold text-accent">{c.businessName}</p>
                       <p className="mt-0.5 line-clamp-2 font-display text-[0.95rem] font-bold leading-snug text-ink">{c.title}</p>
@@ -184,6 +188,8 @@ export default async function HomePage({ searchParams }: { searchParams: Promise
           offers={offers}
           brands={brands}
           videos={videos}
+          fallbackCover={fallbackCover}
+          howVideoFile={media["home.how.video"]?.url ?? null}
         />
       )}
 

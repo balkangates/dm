@@ -27,13 +27,13 @@ export default async function VideosPage() {
           eyebrow="Kısa video anlatımlar"
           title="Uzun talimat okumadan öğren."
           note="Her anlatım; poster, oynatma kontrolü, süre, altyazı (TR/EN/KA — çevirisi olanlarda), oynatma durumu ve yazılı adım adım alternatif içerir. Ses otomatik oynatılmaz."
-          action={<Stamp tone="warning">Storyboard · demo</Stamp>}
+          action={<Stamp tone={videos.some((v) => v.videoUrl) ? "positive" : "warning"}>{videos.some((v) => v.videoUrl) ? "Video + storyboard" : "Storyboard"}</Stamp>}
         />
 
         <Notice tone="info" icon={<Icon.video size={16} />} className="mb-6">
-          Gerçek video üretimi veya barındırma servisi <strong>bağlı değildir</strong>. Bu nedenle oynatıcı, sahne
-          sahne ilerleyen animasyonlu storyboard ve altyazı gösterir; “video hazır” izlenimi vermez. AI video üretimi
-          işletme panelinde ayrı bir iş akışı olarak, durumları açık biçimde sunulur.
+          Yönetim panelinden video yüklenen anlatımlar <strong>gerçek video olarak oynatılır</strong>; sahne ve altyazı
+          video süresine göre eşlenir. Video yüklenmemiş anlatımlar animasyonlu storyboard olarak gösterilir ve bu durum
+          açıkça belirtilir. AI video üretimi işletme panelinde ayrı bir iş akışıdır.
         </Notice>
 
         <VideoLibrary videos={videos} lang={locale.lang} />

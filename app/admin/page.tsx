@@ -1,6 +1,6 @@
 import { redirect } from "next/navigation";
 import { getSessionUser } from "@/lib/authz";
-import { getAdminData, getAffiliateData } from "@/lib/queries";
+import { getAdminData, getAffiliateData, getSiteMedia, listVideos } from "@/lib/queries";
 import { getLocale } from "@/lib/locale";
 import { AdminDash } from "@/components/dashpages";
 
@@ -20,7 +20,9 @@ export default async function AdminPage({
 
   const sp = await searchParams;
   const locale = await getLocale();
-  const [data, affiliate] = await Promise.all([getAdminData(), getAffiliateData()]);
+  const [data, affiliate, media, allVideos] = await Promise.all([getAdminData(), getAffiliateData(), getSiteMedia(), listVideos()]);
+  // Storyboard kayıtları (platform videoları): işletmeye ait yüklenen düzenleme videoları hariç.
+  const videos = allVideos.filter((v) => v.kind !== "UPLOADED_EDIT").map((v) => ({ id: v.id, topic: v.topic, title: v.title, poster: v.poster, videoUrl: v.videoUrl, sceneCount: v.scenes.length }));
 
   return (
     <AdminDash
@@ -34,6 +36,8 @@ export default async function AdminPage({
       }}
       data={data}
       affiliate={affiliate}
+      media={media}
+      videos={videos}
       locale={locale}
       initial={typeof sp.s === "string" ? sp.s : "overview"}
     />

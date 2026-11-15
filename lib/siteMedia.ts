@@ -35,6 +35,7 @@ export const SITE_SLOTS: SlotDef[] = [
   { key: "home.hero.business", kind: "image", area: "home", label: "Hero arka planı · işletme modu", hint: "İşletme modunda üst bant arka planı. Önerilen 1920×1080, yatay." },
   { key: "home.hero.video", kind: "video", area: "home", label: "Hero arka plan videosu", hint: "Sessiz, döngülü arka plan videosu (iki modda da). Tanımlıysa hero görselinin yerine geçer. Kısa (10–20 sn) MP4/WebM önerilir." },
   { key: "home.how.video", kind: "video", area: "home", label: "“Nasıl çalışır” tanıtım videosu", hint: "Anasayfadaki “Nasıl çalışır” alanında storyboard yerine oynatılır (storyboard kaydında kendi videosu yoksa)." },
+  { key: "home.business.video", kind: "video", area: "home", label: "İşletme modu · storyboard videosu", hint: "Anasayfa işletme modundaki “İşletmeler için video anlatım” alanında oynatılır (storyboard kaydında kendi videosu yoksa). Storyboard videosunu aşağıdaki “Storyboard videoları” bölümünden anlatım bazında da yükleyebilirsiniz." },
   { key: "home.cover.fallback", kind: "image", area: "home", label: "Varsayılan kapak görseli", hint: "İşletme / kampanya / fırsat görseli olmayan kartlarda kullanılır. Önerilen 1200×800." },
   // ---- Müşteri paneli ----
   { key: "customer.panel.banner", kind: "image", area: "customer", label: "Müşteri paneli banner görseli", hint: "Hesabım › Genel bakış üstünde gösterilir. Önerilen 1600×400, yatay." },

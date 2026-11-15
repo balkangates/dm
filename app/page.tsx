@@ -177,7 +177,7 @@ export default async function HomePage({ searchParams }: { searchParams: Promise
       <ModeTicker mode={mode} />
 
       {isBusiness ? (
-        <BusinessHome />
+        <BusinessHome lang={locale.lang} videos={videos} businessVideoFile={media["home.business.video"]?.url ?? null} />
       ) : (
         <CustomerHome
           lang={locale.lang}

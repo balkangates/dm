@@ -411,7 +411,12 @@ export function BusinessFlowPanel() {
   );
 }
 
-export function BusinessHome() {
+export function BusinessHome({ lang, videos, businessVideoFile }: { lang: Lang; videos: Videos; businessVideoFile?: string | null }) {
+  // İşletme odaklı storyboard: konusu işletme/reklam/QR/panel ile ilgili olan kayıt; yoksa nasıl çalışır dışındaki ilk kayıt.
+  const bizVideo =
+    videos.find((v) => /BUSINESS|ISLETME|MERCHANT|AD_|ADS|CAMPAIGN|QR|PANEL|STUDIO/i.test(v.topic)) ??
+    videos.find((v) => v.topic !== "HOW_DAMPINGVAR_WORKS") ??
+    videos[0];
   return (
     <>
       {/* ----------------------------- 28 GÜNLÜK PROGRAM ------------------------ */}
@@ -442,6 +447,40 @@ export function BusinessHome() {
           Program gelir veya müşteri garantisi vermez. Sosyal medya yayınlama API&apos;si doğrulanmadan otomatik yayın yapılmaz.
         </p>
       </section>
+
+      {/* ------------------- İŞLETMELER İÇİN STORYBOARD VİDEO ------------------- */}
+      {bizVideo ? (
+        <section id="isletme-video" className="mx-auto max-w-[1280px] scroll-mt-28 px-4 pb-16 sm:px-6">
+          <SectionHead
+            eyebrow="İşletmeler için video anlatım"
+            title="İşletme panelini 1 dakikada gör"
+            desc="Kampanya açma, QR doğrulama ve reklam paketi akışı sahne sahne anlatılır. Video yüklüyse oynatılır; yüklü değilse animasyonlu storyboard gösterilir."
+          />
+          <div className="grid gap-6 lg:grid-cols-[1.35fr_1fr] lg:items-start">
+            <VideoModule
+              title={bizVideo.title}
+              durationSec={bizVideo.durationSec}
+              scenes={bizVideo.scenes}
+              captions={bizVideo.captions}
+              lang={lang}
+              poster={bizVideo.poster ?? undefined}
+              steps={bizVideo.steps}
+              videoSrc={bizVideo.videoUrl ?? businessVideoFile ?? undefined}
+            />
+            <Card>
+              <p className="text-[0.72rem] font-bold uppercase tracking-[0.14em] text-accent">Video ve içerik stüdyosu</p>
+              <p className="mt-2 font-display text-[1.1rem] font-bold leading-snug">Kendi tanıtım içeriğini panelden planla.</p>
+              <p className="mt-2 text-[0.88rem] leading-relaxed text-muted">
+                Senaryo ve sahne planı panelde hazırlanır; onayınız olmadan hiçbir içerik yayınlanmaz. Her anlatımın yazılı adım alternatifi vardır.
+              </p>
+              <div className="mt-4 flex flex-wrap gap-2">
+                <Button href="/panel?s=studio" size="sm" icon={<Icon.video size={14} />}>Video stüdyosu</Button>
+                <Button href="/videolar" variant="secondary" size="sm">Tüm videolar</Button>
+              </div>
+            </Card>
+          </div>
+        </section>
+      ) : null}
 
       {/* ----------------------------- REKLAM PAKETLERİ ------------------------- */}
       <section className="border-y border-line bg-surface">

@@ -16,17 +16,17 @@ export function HeroBackdrop({ media, imageKey }: { media: SiteMediaMap; imageKe
           playsInline
           preload="metadata"
           aria-hidden="true"
-          className="absolute inset-0 h-full w-full object-cover opacity-40"
+          className="absolute inset-0 h-full w-full object-cover"
         />
-        <div className="absolute inset-0 bg-gradient-to-b from-ink/70 via-ink/50 to-ink/85" />
+        <div className="absolute inset-0 bg-gradient-to-r from-ink/60 via-ink/20 to-transparent" />
       </>
     );
   }
   if (image) {
     return (
       <>
-        <img src={image.url} alt={image.alt ?? ""} aria-hidden={image.alt ? undefined : true} className="absolute inset-0 h-full w-full object-cover opacity-35" />
-        <div className="absolute inset-0 bg-gradient-to-b from-ink/70 via-ink/50 to-ink/85" />
+        <img src={image.url} alt={image.alt ?? ""} aria-hidden={image.alt ? undefined : true} className="absolute inset-0 h-full w-full object-cover" />
+        <div className="absolute inset-0 bg-gradient-to-r from-ink/60 via-ink/20 to-transparent" />
       </>
     );
   }

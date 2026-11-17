@@ -8,6 +8,7 @@ import { Badge, Button, Card, Notice, SectionHead } from "@/components/ds";
 import { Icon } from "@/components/icons";
 import { CampaignCardView } from "@/components/discovery";
 import VoiceAssistant from "@/components/voice";
+import MenuCart from "@/components/MenuCart";
 import { ensureSeeded, getBusinessBySlug, getSiteMedia, orderCapacityAvailable, trackEvent } from "@/lib/queries";
 import { DEFAULT_COVER } from "@/lib/siteMedia";
 import { businessZone, DAY_NAMES, isOpenNow, money, todayHours, type Currency } from "@/lib/money";
@@ -95,39 +96,33 @@ export default async function BusinessPage({ params }: P) {
 
             {d.products.length ? (
               <div className="mt-12">
-                <SectionHead eyebrow="Ürünler" title="Öne çıkanlar" />
-                <div className="card divide-y divide-line-soft p-0">
-                  {d.products.map((p) => (
-                    <div key={p.id} className="flex flex-wrap items-center justify-between gap-4 px-5 py-4">
-                      <div className="min-w-[220px] flex-1">
-                        <p className="font-display text-[1rem] font-bold">{p.name}</p>
-                        <p className="mt-1 text-[0.85rem] text-muted">{p.description}</p>
-                      </div>
-                      <div className="text-right">
-                        {(() => {
-                          // FAZ 12B — iki fiyat: işletme içi (gel-al/rezervasyon) ve adrese teslim (paket servis).
-                          const base = p.discountPriceCents ?? p.priceCents;
-                          const diff = p.deliveryPriceCents != null && p.deliveryPriceCents !== base;
-                          return (
-                            <>
-                              {p.discountPriceCents ? <p className="tabular text-[0.8rem] text-muted line-through">{money(p.priceCents, cur, locale.lang)}</p> : null}
-                              {diff ? (
-                                <>
-                                  <p className="tabular text-[0.78rem] text-muted">İşletme içi</p>
-                                  <p className="tabular text-[1.05rem] font-semibold">{money(base, cur, locale.lang)}</p>
-                                  <p className="tabular mt-1 text-[0.78rem] text-muted">Adrese teslim</p>
-                                  <p className="tabular text-[1.05rem] font-semibold">{money(p.deliveryPriceCents as number, cur, locale.lang)}</p>
-                                </>
-                              ) : (
-                                <p className="tabular text-[1.1rem] font-semibold">{money(base, cur, locale.lang)}</p>
-                              )}
-                            </>
-                          );
-                        })()}
-                      </div>
-                    </div>
-                  ))}
-                </div>
+                <SectionHead
+                  eyebrow="Menü ve sipariş"
+                  title="Menüden seç, sesle ya da sepetle sipariş ver"
+                  desc="Gel-al, rezerve veya adrese teslim. Ödeme kapıda/iş yerinde işletmeye yapılır; DampingVar ödeme almaz."
+                />
+                <MenuCart
+                  business={{
+                    id: b.id,
+                    name: b.name,
+                    district: b.district,
+                    modes: { gelAl: b.modeGelAl, rezerve: b.modeRezerve, paketServis: b.modePaketServis },
+                    acceptingOrders: b.acceptingOrders && hasOrderCapacity,
+                    kdvRate: b.kdvRate,
+                    openNow: open,
+                    timeZone: tz,
+                    hours: d.hours.map((h) => ({ dayOfWeek: h.dayOfWeek, opensAt: h.opensAt, closesAt: h.closesAt, closed: h.closed })),
+                  }}
+                  products={d.products.filter((p) => p.active).map((p) => ({
+                    id: p.id, name: p.name, description: p.description, priceCents: p.priceCents,
+                    discountPriceCents: p.discountPriceCents, deliveryPriceCents: p.deliveryPriceCents,
+                    options: p.options, kdvRate: p.kdvRate, category: p.category, imageUrl: p.imageUrl,
+                  }))}
+                  campaigns={d.campaigns.map((c) => ({ title: c.title, discountPercent: c.discountPercent, discountAmountCents: c.discountAmountCents, minBasketCents: c.minBasketCents, startsAt: c.startsAt, endsAt: c.endsAt, serviceMode: c.serviceMode, serviceModes: c.serviceModes, paymentScope: c.paymentScope }))}
+                  user={user ? { name: user.name, phone: user.phone, address: user.address } : null}
+                  currency={cur}
+                  lang={locale.lang}
+                />
               </div>
             ) : null}
 

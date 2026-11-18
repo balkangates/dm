@@ -1,8 +1,9 @@
+import { OrderButton } from "@/components/BusinessOrder";
 import Link from "next/link";
 import { currentUser } from "@/lib/session";
 import { getLocale } from "@/lib/locale";
 import { PublicShell, type SessionLite } from "@/components/Shell";
-import { Badge, Reveal, SectionHead } from "@/components/ds";
+import { Badge, Button, Reveal, SectionHead } from "@/components/ds";
 import { Icon } from "@/components/icons";
 import { ensureSeeded, getSiteMedia, listBusinesses, listDistricts } from "@/lib/queries";
 import { DEFAULT_COVER } from "@/lib/siteMedia";
@@ -34,7 +35,8 @@ export default async function BusinessesPage() {
         <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
           {businesses.map((b, i) => (
             <Reveal key={b.id} delay={i * 45}>
-              <Link href={`/isletme/${b.slug}`} className="card hover-lift group overflow-hidden p-0">
+              <div className="card hover-lift group overflow-hidden p-0">
+              <Link href={`/isletme/${b.slug}`} className="block">
                 <div className="relative h-40 overflow-hidden">
                   <img src={b.coverImage ?? fallbackCover} alt={b.name} loading="lazy" className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-105" />
                   <div className="absolute inset-0 bg-gradient-to-t from-ink/60 to-transparent" />
@@ -53,6 +55,11 @@ export default async function BusinessesPage() {
                   </div>
                 </div>
               </Link>
+              <div className="grid grid-cols-[1fr_auto] gap-2 border-t border-line-soft p-3">
+                <OrderButton slug={b.slug} name={b.name} className="w-full" />
+                <Link href={`/isletme/${b.slug}`}><Button size="sm" variant="ghost">Profil</Button></Link>
+              </div>
+              </div>
             </Reveal>
           ))}
         </div>

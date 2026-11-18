@@ -18,6 +18,7 @@ export type BusinessRow = {
   address: string;
   lat: number | null;
   lng: number | null;
+  deliveryRadiusKm: number | null;
   phone: string | null;
   whatsapp: string | null;
   website: string | null;

@@ -65,6 +65,7 @@ function mapBusiness(b: Row): BusinessRow {
     address: str(b.address),
     lat: b.lat == null ? null : Number(b.lat),
     lng: b.lng == null ? null : Number(b.lng),
+    deliveryRadiusKm: b.delivery_radius_km == null ? null : Number(b.delivery_radius_km),
     phone: nul(b.phone),
     whatsapp: nul(b.whatsapp),
     website: nul(b.website),

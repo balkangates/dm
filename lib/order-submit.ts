@@ -6,6 +6,8 @@
  * sunucuda teslimat tipine göre çözülmesi, kampanya indirimi + KDV dökümü, çift gönderim engeli.
  * Sipariş yalnızca işletmeye iletilir; DampingVar ödeme almaz.
  */
+import { geocodeAddress } from "@/lib/geocode";
+import { haversineKm, validCoord } from "@/lib/geodist";
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { getSessionUser } from "@/lib/authz";
@@ -88,7 +90,7 @@ export async function placeOrder(body: Row, source: OrderSource): Promise<NextRe
 
     const { data: biz } = await client
       .from("businesses")
-      .select("id, name, country, suspended_at, mode_gel_al, mode_paket_servis, mode_rezerve, accepting_orders, kdv_rate")
+      .select("id, name, country, suspended_at, mode_gel_al, mode_paket_servis, mode_rezerve, accepting_orders, kdv_rate, lat, lng, delivery_radius_km, district, city")
       .eq("id", businessId)
       .is("suspended_at", null)
       .maybeSingle();
@@ -109,6 +111,29 @@ export async function placeOrder(body: Row, source: OrderSource): Promise<NextRe
         { ok: false, error: `${biz.name} şu an ${deliveryType === "REZERVE" ? "rezerve" : deliveryType === "GEL_AL" ? "gel-al" : "adrese teslim"} siparişi almıyor.` },
         { status: 409 },
       );
+
+    // Teslimat bölge sınırı: işletme konumundan düz çizgi mesafesi (km). Yarıçap tanımlı değilse sınır yok.
+    if (deliveryType === "PAKET_SERVIS" && biz.delivery_radius_km != null && address) {
+      const radius = Number(biz.delivery_radius_km);
+      if (Number.isFinite(radius) && radius > 0) {
+        if (!validCoord(Number(biz.lat), Number(biz.lng)))
+          return NextResponse.json({ ok: false, error: `${biz.name} henüz konumunu tanımlamadığı için adrese teslim siparişi doğrulanamıyor.` }, { status: 409 });
+        // Kayıtlı adresle aynıysa profildeki konum; farklı adresse adres koordinata çevrilir.
+        const { data: prof } = await client.from("profiles").select("address, lat, lng").eq("id", user.id).maybeSingle();
+        let dest: { lat: number; lng: number } | null = null;
+        if (prof && String(prof.address ?? "").trim() === address && validCoord(Number(prof.lat), Number(prof.lng)))
+          dest = { lat: Number(prof.lat), lng: Number(prof.lng) };
+        else dest = await geocodeAddress(address, { district: customerDistrict ?? (biz.district as string | null), city: biz.city as string | null, country: biz.country as string | null });
+        if (!dest)
+          return NextResponse.json({ ok: false, error: "Teslimat adresinin konumu bulunamadı. Mahalle, sokak, bina no ve ilçeyi eksiksiz yazıp tekrar dene." }, { status: 422 });
+        const km = haversineKm({ lat: Number(biz.lat), lng: Number(biz.lng) }, dest);
+        if (km > radius)
+          return NextResponse.json(
+            { ok: false, outOfZone: true, error: `Bu adres ${biz.name} teslimat bölgesinin dışında (yaklaşık ${km.toFixed(1)} km; sınır ${radius} km). Gel-al seçebilir ya da yakın bir adres girebilirsin.` },
+            { status: 409 },
+          );
+      }
+    }
 
     // Çalışma saatleri (İŞLETMENİN saat diliminde): kapalıyken gel-al / paket servis alınmaz;
     // rezerve yalnız açılış–kapanış saatleri arasına yapılabilir. Saat tanımı yoksa engellenmez.

@@ -7,6 +7,8 @@
  *  * RPC hataları Türkçe mesajla 400 döner (eski jsonError mesajlarıyla aynı metin).
  *  * Finansal değerler istemciden SUNUCUDA sınırırlanır (eski rotalarla aynı).
  */
+import { geocodeAddress } from "@/lib/geocode";
+import { validCoord } from "@/lib/geodist";
 import { createClient } from "@/lib/supabase/server";
 import { trackEvent, logAudit } from "@/lib/queries";
 import { slugify } from "@/lib/money";
@@ -290,6 +292,12 @@ export async function accountPreferences(user: SessionUserLite, body: Row) {
   if (["TRY", "USD", "GEL", "EUR"].includes(String(body.currency))) patch.currency = String(body.currency);
   if (typeof body.country === "string" && body.country.length === 2) patch.country = String(body.country).toUpperCase();
   if (!Object.keys(patch).length) throw new ActionError(400, "Güncellenecek alan yok.");
+  // Kayıtlı adres değiştiyse konumu otomatik güncelle (başarısızsa eski konum silinir; sipariş anında yeniden çözülür).
+  if (typeof patch.address === "string") {
+    const g = patch.address ? await geocodeAddress(String(patch.address), { district: (patch.district as string) ?? null, country: (patch.country as string) ?? null }) : null;
+    patch.lat = g?.lat ?? null;
+    patch.lng = g?.lng ?? null;
+  }
 
   // RLS: yalnızca kendi satırı; profiles_guard trigger rol/e-posta/davet değişikliğini reddeder.
   const { data, error } = await client.from("profiles").update(patch).eq("id", user.id).select("*").maybeSingle();
@@ -619,10 +627,25 @@ export async function businessAction(actor: BusinessActorLite, body: Row) {
       .maybeSingle();
     if (error) fail(error);
     if (!row) throw new ActionError(404, "İşletme bulunamadı.");
+    // Konum: kayıtlı adresten otomatik çekilir (geocode); olmazsa tarayıcı konumu (açıksa) kullanılır.
+    let location: "address" | "browser" | "kept" | "none" = "kept";
+    let saved = row as Row;
+    const r0 = row as Row;
+    const hasCoord = validCoord(Number(r0.lat), Number(r0.lng));
+    if (typeof body.address === "string" && (body.address !== body.prevAddress || !hasCoord || body.relocate === true)) {
+      const g = await geocodeAddress(String(r0.address ?? ""), { district: r0.district as string, city: r0.city as string, country: r0.country as string });
+      const bl = Number(body.browserLat), bg = Number(body.browserLng);
+      const pick = g ?? (validCoord(bl, bg) ? { lat: bl, lng: bg } : null);
+      if (pick) {
+        const { data: r2 } = await client.from("businesses").update({ lat: pick.lat, lng: pick.lng }).eq("id", actor.businessId).select("*").maybeSingle();
+        if (r2) saved = r2 as Row;
+        location = g ? "address" : "browser";
+      } else location = "none";
+    }
     await logAudit(actor.email, actor.staffRole, "BUSINESS_PROFILE_UPDATED", "businesses", actor.businessId, {
-      fields: Object.keys(patch),
+      fields: Object.keys(patch), location,
     });
-    return Response.json({ ok: true, business: cam(row as Row) });
+    return Response.json({ ok: true, business: cam(saved), location });
   }
 
   if (action === "hours") {
@@ -903,6 +926,15 @@ export async function businessAction(actor: BusinessActorLite, body: Row) {
       order_autoprint: b2(body.orderAutoprint, cur.order_autoprint !== false),
       kdv_rate: [0, 1, 10, 18, 20].includes(Number(body.kdvRate)) ? Number(body.kdvRate) : Number(cur.kdv_rate ?? 20),
     };
+    if ("deliveryRadiusKm" in body) {
+      const raw = body.deliveryRadiusKm;
+      if (raw === null || raw === "" ) payload.delivery_radius_km = null;
+      else {
+        const km = Number(String(raw).replace(",", "."));
+        if (!Number.isFinite(km) || km <= 0 || km > 200) throw new ActionError(400, "Teslimat yarıçapı 0,5 ile 200 km arasında olmalı (boş = sınırsız).");
+        payload.delivery_radius_km = Math.round(km * 10) / 10;
+      }
+    }
     const { data: updated, error } = await client.from("businesses").update(payload).eq("id", actor.businessId).select("*").maybeSingle();
     if (error) fail(error);
     await logAudit(actor.email, actor.staffRole, "BUSINESS_ORDER_SETTINGS", "businesses", actor.businessId, payload);

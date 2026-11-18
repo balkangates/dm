@@ -650,7 +650,7 @@ function ProfileSection({ user, lang, currency, onSaved }: { user: NonNullable<S
           <Field label="Ad Soyad"><Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></Field>
           <Field label="Cep telefonu" hint="Siparişte işletme seni bu numaradan arar."><Input value={form.phone} inputMode="tel" onChange={(e) => setForm({ ...form, phone: e.target.value })} placeholder="05xx xxx xx xx" /></Field>
           <Field label="İlçe / Semt"><Input value={form.district} onChange={(e) => setForm({ ...form, district: e.target.value })} placeholder="Kadıköy" /></Field>
-          <Field label="Teslimat adresi" hint="Adrese teslim siparişlerde adres alanına otomatik yazılır." className="sm:col-span-2"><Input value={form.address} onChange={(e) => setForm({ ...form, address: e.target.value })} placeholder="Mahalle, sokak, kapı no" /></Field>
+          <Field label="Teslimat adresi" hint="Adrese teslim siparişlerde otomatik yazılır; kaydedince adresin konumu da otomatik güncellenir." className="sm:col-span-2"><Input value={form.address} onChange={(e) => setForm({ ...form, address: e.target.value })} placeholder="Mahalle, sokak, kapı no" /></Field>
           <Field label="Dil">
             <Select value={form.lang} onChange={(e) => setForm({ ...form, lang: e.target.value as Lang })}>
               <option value="tr">Türkçe</option><option value="en">English</option><option value="ka">ქართული</option>

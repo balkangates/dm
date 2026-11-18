@@ -109,6 +109,7 @@ export default async function BusinessPage({ params }: P) {
                     modes: { gelAl: b.modeGelAl, rezerve: b.modeRezerve, paketServis: b.modePaketServis },
                     acceptingOrders: b.acceptingOrders && hasOrderCapacity,
                     kdvRate: b.kdvRate,
+                    deliveryRadiusKm: b.deliveryRadiusKm,
                     openNow: open,
                     timeZone: tz,
                     hours: d.hours.map((h) => ({ dayOfWeek: h.dayOfWeek, opensAt: h.opensAt, closesAt: h.closesAt, closed: h.closed })),

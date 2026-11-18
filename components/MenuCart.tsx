@@ -111,6 +111,8 @@ export default function MenuCart({
     openNow?: boolean;
     timeZone?: string;
     hours?: HourRow[];
+    /** Teslimat yarıçapı (km); boş = sınırsız. */
+    deliveryRadiusKm?: number | null;
   };
   products: MenuProduct[];
   campaigns: VoiceCampaign[];
@@ -135,6 +137,9 @@ export default function MenuCart({
   const [mode, setMode] = useState<VoiceMode | null>(null);
   const [payment, setPayment] = useState<VoicePayment | null>(null);
   const [form, setForm] = useState({ name: user?.name ?? "", phone: user?.phone ?? "", address: user?.address ?? "", reservedAt: "", note: "" });
+  // Teslimat adresi: kayıtlı adres varsa varsayılan o; farklı adrese isteniyorsa yeni adres ZORUNLU yazılır.
+  const savedAddress = (user?.address ?? "").trim();
+  const [addrChoice, setAddrChoice] = useState<"saved" | "other">(savedAddress ? "saved" : "other");
   const [sending, setSending] = useState(false);
   const [done, setDone] = useState<{ orderId: string | null; breakdown: PriceBreakdown | null; mode: VoiceMode } | null>(null);
   const [openNow, setOpenNow] = useState<boolean>(business.openNow ?? true);
@@ -259,7 +264,8 @@ export default function MenuCart({
       if (!mode) return "Teslimat tipini seç.";
       if (!form.name.trim()) return "Adını yaz.";
       if (form.phone.replace(/\D/g, "").length < 10) return "Geçerli bir telefon numarası yaz.";
-      if (mode === "PAKET_SERVIS" && !form.address.trim()) return "Teslimat adresini yaz.";
+      if (mode === "PAKET_SERVIS" && !form.address.trim()) return addrChoice === "other" ? "Farklı adrese teslim için teslimat adresini yaz." : "Teslimat adresini yaz.";
+      if (mode === "PAKET_SERVIS" && addrChoice === "other" && savedAddress && form.address.trim() === savedAddress) return "Farklı adres seçtin; kayıtlı adresinden farklı bir teslimat adresi yaz ya da “Kayıtlı adresim”i seç.";
       if (mode === "REZERVE") {
         if (!form.reservedAt) return "Rezerve saatini seç.";
         const iso = zonedHmToIso(form.reservedAt, tz);
@@ -464,9 +470,26 @@ export default function MenuCart({
               <Input className="mt-1" type="tel" inputMode="tel" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} autoComplete="tel" placeholder="05xx xxx xx xx" />
             </label>
             {mode === "PAKET_SERVIS" ? (
-              <label className="block text-[0.78rem] font-semibold">Teslimat adresi
-                <Input className="mt-1" value={form.address} onChange={(e) => setForm({ ...form, address: e.target.value })} autoComplete="street-address" placeholder="Mahalle, sokak, bina, daire" />
-              </label>
+              <div className="space-y-2">
+                <p className="text-[0.78rem] font-semibold">Teslimat adresi</p>
+                {savedAddress ? (
+                  <div className="grid grid-cols-2 gap-2" role="radiogroup" aria-label="Teslimat adresi">
+                    {([["saved", "Kayıtlı adresim"], ["other", "Farklı adrese teslim"]] as const).map(([k, l]) => (
+                      <button key={k} type="button" role="radio" aria-checked={addrChoice === k}
+                        onClick={() => { setAddrChoice(k); setForm((f) => ({ ...f, address: k === "saved" ? savedAddress : "" })); }}
+                        className={`rounded-[10px] border-2 px-3 py-2 text-[0.8rem] font-semibold transition-colors ${addrChoice === k ? "border-accent bg-accent/5" : "border-line hover:border-ink-500"}`}>{l}</button>
+                    ))}
+                  </div>
+                ) : null}
+                {addrChoice === "saved" && savedAddress ? (
+                  <p className="rounded-[8px] border border-line bg-canvas px-3 py-2 text-[0.84rem]">{savedAddress}</p>
+                ) : (
+                  <Input value={form.address} onChange={(e) => setForm({ ...form, address: e.target.value })} autoComplete="street-address" placeholder="Mahalle, sokak, bina no, daire, ilçe" />
+                )}
+                {business.deliveryRadiusKm ? (
+                  <p className="text-[0.74rem] text-muted">{business.name} yalnızca işletmeye {business.deliveryRadiusKm.toLocaleString("tr-TR")} km çevresindeki adreslere teslimat yapar.</p>
+                ) : null}
+              </div>
             ) : null}
             {mode === "REZERVE" ? (
               <label className="block text-[0.78rem] font-semibold">Rezerve saati (işletme saatiyle)

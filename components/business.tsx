@@ -402,6 +402,26 @@ function ProfileSection({ d, onPost, lang }: { d: BD; onPost: (r: string, b: Rec
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
   const toast = useToast();
+  // Konum: adres alanından sonra (tarayıcı konum izni açıksa) otomatik alınır; "Kaydet" ile kaydedilir.
+  // Sunucu kayıtlı adresi ayrıca koordinata çevirir; çevrilemezse bu tarayıcı konumu kullanılır.
+  const [browserPos, setBrowserPos] = useState<{ lat: number; lng: number } | null>(null);
+  const [posState, setPosState] = useState<"idle" | "loading" | "ok" | "denied">("idle");
+  function fetchBrowserPos(force: boolean) {
+    if (typeof navigator === "undefined" || !navigator.geolocation) { setPosState("denied"); return; }
+    const go = () => {
+      setPosState("loading");
+      navigator.geolocation.getCurrentPosition(
+        (p) => { setBrowserPos({ lat: p.coords.latitude, lng: p.coords.longitude }); setPosState("ok"); },
+        () => setPosState("denied"),
+        { enableHighAccuracy: true, timeout: 8000, maximumAge: 60000 },
+      );
+    };
+    if (force) { go(); return; }
+    (navigator.permissions?.query({ name: "geolocation" as PermissionName }) ?? Promise.reject())
+      .then((r) => { if (r.state === "granted") go(); })
+      .catch(() => undefined);
+  }
+  const savedLoc = d.biz.lat != null && d.biz.lng != null;
   // İSTEK (a): eksiksiz profil — canlı ölçer (tüm alanlar) + zorunlu alan doğrulaması.
   const missingNow = profileMissingOf(f);
   const filledAll = [...PROFILE_REQUIRED, ...PROFILE_OPTIONAL].filter((r) => String(f[r.key] ?? "").trim().length >= 2).length;
@@ -541,7 +561,7 @@ function ProfileSection({ d, onPost, lang }: { d: BD; onPost: (r: string, b: Rec
           }
           setErrors({});
           setBusy(true);
-          await onPost("/api/business", { action: "profile", ...f }, "Profil güncellendi");
+          await onPost("/api/business", { action: "profile", ...f, prevAddress: d.biz.address, browserLat: browserPos?.lat, browserLng: browserPos?.lng }, "Profil güncellendi — konum adresten güncellendi");
           setBusy(false);
         }}>
           <Field label="İşletme adı" required error={errors.name}><Input value={f.name} invalid={!!errors.name} onChange={(e) => setF({ ...f, name: e.target.value })} /></Field>
@@ -550,7 +570,18 @@ function ProfileSection({ d, onPost, lang }: { d: BD; onPost: (r: string, b: Rec
           <Field label="WhatsApp"><Input value={f.whatsapp} onChange={(e) => setF({ ...f, whatsapp: e.target.value })} /></Field>
           <Field label="Instagram"><Input value={f.instagram} onChange={(e) => setF({ ...f, instagram: e.target.value })} /></Field>
           <Field label="Web sitesi"><Input value={f.website} onChange={(e) => setF({ ...f, website: e.target.value })} /></Field>
-          <Field label="Adres" required error={errors.address} className="md:col-span-2"><Input value={f.address} invalid={!!errors.address} onChange={(e) => setF({ ...f, address: e.target.value })} /></Field>
+          <Field label="Adres" required error={errors.address} className="md:col-span-2"><Input value={f.address} invalid={!!errors.address} onChange={(e) => setF({ ...f, address: e.target.value })} onBlur={() => fetchBrowserPos(false)} /></Field>
+          <div className="md:col-span-2 -mt-2 rounded-[4px] border border-line bg-canvas px-3 py-2 text-[0.8rem] text-muted">
+            <p>
+              <strong className="text-ink">Konum:</strong>{" "}
+              {savedLoc ? <span className="tabular">{d.biz.lat?.toFixed(5)}, {d.biz.lng?.toFixed(5)} (kayıtlı)</span> : "henüz kayıtlı değil"}
+              {posState === "ok" && browserPos ? <span className="tabular"> · tarayıcı konumu alındı: {browserPos.lat.toFixed(5)}, {browserPos.lng.toFixed(5)}</span> : null}
+              {posState === "loading" ? " · konum alınıyor…" : null}
+              {posState === "denied" ? " · tarayıcı konumu alınamadı (izin kapalı)" : null}
+            </p>
+            <p className="mt-1">Kaydet’e bastığında adresin konuma çevrilir ve işletme konumu otomatik güncellenir; müşteriler “yakınımdaki işletmeler” listesinde seni mesafeye göre görür. Adres çevrilemezse tarayıcı konumu kullanılır.</p>
+            <button type="button" className="mt-1 font-medium text-accent hover:underline" onClick={() => fetchBrowserPos(true)}>Şu anki konumumu al</button>
+          </div>
           <Field label="Kısa açıklama" required error={errors.description} className="md:col-span-2" hint="AI içerikleri bu açıklamaya ve ürün/hizmet bilgilerine göre uyarlanır."><Textarea rows={3} value={f.description} invalid={!!errors.description} onChange={(e) => setF({ ...f, description: e.target.value })} /></Field>
           <Field label="İşletme hikâyesi" className="md:col-span-2"><Textarea rows={3} value={f.story} onChange={(e) => setF({ ...f, story: e.target.value })} /></Field>
           <div className="md:col-span-2"><Button type="submit" loading={busy}>Değişiklikleri kaydet</Button></div>
@@ -1277,6 +1308,7 @@ function OrderSettingsCard({ d, post }: { d: BD; post: (r: string, b: Record<str
     accepting: biz.acceptingOrders,
     autoprint: biz.orderAutoprint,
     kdvRate: String(biz.kdvRate ?? 20),
+    radius: biz.deliveryRadiusKm == null ? "" : String(biz.deliveryRadiusKm),
   });
   const [busy, setBusy] = useState(false);
   const toast = useToast();
@@ -1296,6 +1328,7 @@ function OrderSettingsCard({ d, post }: { d: BD; post: (r: string, b: Record<str
         acceptingOrders: f.accepting,
         orderAutoprint: f.autoprint,
         kdvRate: Number(f.kdvRate),
+        deliveryRadiusKm: f.radius.trim() === "" ? null : f.radius.trim(),
       },
       "Sipariş ayarları kaydedildi",
     );
@@ -1321,6 +1354,11 @@ function OrderSettingsCard({ d, post }: { d: BD; post: (r: string, b: Record<str
           <span className="text-[0.86rem] text-ink-700">Sipariş düştüğünde fişi otomatik yazdır (adisyon yazıcı)</span>
           <Toggle checked={f.autoprint} onChange={(v) => setF({ ...f, autoprint: v })} label="Otomatik fiş yazdırma" />
         </div>
+        {f.paketServis ? (
+          <Field label="Teslimat bölge sınırı (km)" hint={biz.lat != null ? "İşletme konumunun çevresinde, düz çizgi mesafesi olarak yarıçap. Boş bırakırsan sınır yok. Örn. 5 → 5 km çevre (yaklaşık 78 km² alan)." : "Önce Profil bölümünde adresi kaydet; işletme konumu olmadan sınır uygulanamaz."}>
+            <Input inputMode="decimal" value={f.radius} placeholder="Örn. 5" onChange={(e) => setF({ ...f, radius: e.target.value })} />
+          </Field>
+        ) : null}
         <Field label="İşletme KDV oranı (%)" hint="Ürün bazlı oran girilmezse bu oran kullanılır (matrah − kampanya indirimi + KDV)">
           <Select value={f.kdvRate} onChange={(e) => setF({ ...f, kdvRate: e.target.value })}>
             {KDV_RATE_OPTIONS.map((r) => <option key={r} value={r}>%{r}</option>)}

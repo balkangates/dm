@@ -22,7 +22,7 @@ type Ctx = {
   business: {
     id: string; name: string; district: string;
     modes?: { gelAl?: boolean; rezerve?: boolean; paketServis?: boolean };
-    acceptingOrders?: boolean; kdvRate?: number; openNow?: boolean; timeZone?: string; hours?: HourRow[];
+    acceptingOrders?: boolean; kdvRate?: number; deliveryRadiusKm?: number | null; openNow?: boolean; timeZone?: string; hours?: HourRow[];
   };
   products: MenuProduct[];
   campaigns: VoiceCampaign[];

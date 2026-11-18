@@ -31,6 +31,7 @@ export async function GET(req: Request) {
       modes: { gelAl: b.modeGelAl, rezerve: b.modeRezerve, paketServis: b.modePaketServis },
       acceptingOrders: b.acceptingOrders && hasCapacity,
       kdvRate: b.kdvRate,
+      deliveryRadiusKm: b.deliveryRadiusKm,
       openNow: isOpenNow(d.hours, new Date(), tz),
       timeZone: tz,
       hours: d.hours.map((h) => ({ dayOfWeek: h.dayOfWeek, opensAt: h.opensAt, closesAt: h.closesAt, closed: h.closed })),

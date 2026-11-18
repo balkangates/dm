@@ -910,6 +910,15 @@ export async function businessAction(actor: BusinessActorLite, body: Row) {
   /* FAZ 12C — Sipariş ayarları (MANAGER/OWNER): modlar (gel-al/rezerve/paket
    * servis; varsayılan kapalı — işletme isterse açar), "sipariş alıyorum"
    * anahtarı, otomatik fiş yazdırma, işletme KDV oranı (0/1/10/18/20). */
+  if (action === "plan_request") {
+    if (actor.staffRole !== "OWNER" && actor.staffRole !== "MANAGER") throw new ActionError(403, "Paket talebi için işletme sahibi veya yönetici olmalısın.");
+    const plan = String(body.planCode ?? "");
+    const { data, error } = await client.rpc("dv_plan_request", { p_plan: plan, p_note: typeof body.note === "string" ? body.note : null });
+    if (error) fail(error);
+    await logAudit(actor.email, actor.staffRole, "PLAN_REQUESTED", "businesses", actor.businessId, { plan });
+    return Response.json({ ok: true, request: data });
+  }
+
   if (action === "settings_save") {
     const { data: cur } = await client
       .from("businesses")
@@ -1131,7 +1140,7 @@ export async function adminAction(user: SessionUserLite, body: Row) {
       if (body.featured === true) patch.featured = true;
       const { data: row, error } = await client.from("businesses").update(patch).eq("id", id).select("*").maybeSingle();
       if (error) fail(error);
-      if (!row) throw new ActionError(404, "İşletme bulunamadı.");
+      if (!row) throw new ActionError(403, "İşletme güncellenemedi (yetki/RLS). 20261118000002_plan_requests.sql migration'ını çalıştırdığından emin ol.");
       await logAudit(user.email, "ADMIN", "BUSINESS_VERIFY", "businesses", id, { verified: row.verified });
       return Response.json({ ok: true, business: cam(row as Row) });
     }
@@ -1336,8 +1345,15 @@ export async function adminAction(user: SessionUserLite, body: Row) {
         .select("*")
         .maybeSingle();
       if (error) fail(error);
+      if (!row) throw new ActionError(403, "Paket güncellenemedi (yetki/RLS). 20261118000002_plan_requests.sql migration'ını çalıştırdığından emin ol.");
       await logAudit(user.email, "ADMIN", "BUSINESS_PLAN_CHANGED", "businesses", id, { planCode });
       return Response.json({ ok: true, business: cam(row as Row) });
+    }
+    case "plan_request_decide": {
+      const { data, error } = await client.rpc("dv_plan_request_decide", { p_id: id, p_approve: body.approve === true });
+      if (error) fail(error);
+      await logAudit(user.email, "ADMIN", body.approve === true ? "PLAN_REQUEST_APPROVED" : "PLAN_REQUEST_REJECTED", "plan_requests", id, data as Row);
+      return Response.json({ ok: true, result: data });
     }
     case "package_update": {
       const code = String(body.code ?? id);

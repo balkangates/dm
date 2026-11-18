@@ -942,7 +942,7 @@ export async function getBusinessData(businessId: string, days = 14) {
 
 export async function getAdminData() {
   const client = await sb();
-  const [biz, profiles, camps, usages, refs, bonuses, policies, pkgs, feeRules, invs, ads, fraud, audit, aiSet, contents, events, reqs, staff, ords] =
+  const [biz, profiles, camps, usages, refs, bonuses, policies, pkgs, feeRules, invs, ads, fraud, audit, aiSet, contents, events, reqs, staff, planReqs, ords] =
     await Promise.all([
       client.from("businesses").select("*").order("created_at", { ascending: false }),
       client.from("profiles").select("*").order("created_at", { ascending: false }),
@@ -962,6 +962,7 @@ export async function getAdminData() {
       client.from("analytics_events").select("*").limit(2000),
       client.from("business_requests").select("*").eq("status", "pending"),
       client.from("business_staff").select("*"),
+      client.from("plan_requests").select("*").eq("status", "pending").order("created_at", { ascending: false }),
       // FAZ 12A — platform geneli sipariş izleme (sesli/web).
       client.from("orders").select("*").order("created_at", { ascending: false }).limit(200),
     ]);
@@ -977,6 +978,7 @@ export async function getAdminData() {
   const eventRows = (events.data ?? []) as Row[];
   const reqRows = (reqs.data ?? []) as Row[];
   const staffRows = (staff.data ?? []) as Row[];
+  const planReqRows = (planReqs.data ?? []) as Row[];
   const evCount = (k: string) => eventRows.filter((e) => str(e.kind) === k).length;
 
   return {
@@ -1062,6 +1064,15 @@ export async function getAdminData() {
       usages: usageRows.filter((x) => str(x.customer_id) === str(u.id)).length,
     })),
     // FAZ 10 — bekleyen "İşletme Aç" talepleri (userId → talep özeti)
+    planRequests: planReqRows.map((r) => ({
+      id: str(r.id),
+      businessId: str(r.business_id),
+      businessName: pickStr(bizRows, str(r.business_id), "name"),
+      currentPlan: str(r.current_plan),
+      requestedPlan: str(r.requested_plan),
+      note: nul(r.note),
+      createdAt: iso(r.created_at),
+    })),
     pendingApprovals: Object.fromEntries(
       reqRows.map((r) => {
         const p = (r.payload ?? {}) as Row;

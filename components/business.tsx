@@ -307,7 +307,7 @@ export default function BusinessDashboard({ data, lang, currency, section, video
               {p.orderQuotaMonthly != null && p.orderUnitPriceCents != null ? ` · ek sipariş ${money(p.orderUnitPriceCents, currency, lang)} (en az ${num(p.orderTopupMinQty, lang)} ve katları)` : ""}
             </p>
             <Button className="mt-5 w-full" variant={p.code === d.biz.planCode ? "secondary" : "primary"} size="sm" disabled={p.code === d.biz.planCode}
-              onClick={() => toast.push({ title: "Talep iletildi", desc: `${p.name} için sözleşme talebin satış ekibine iletildi. Faturalandırma sözleşmeye göre yapılır.`, tone: "positive" })}>
+              onClick={() => void post("/api/business", { action: "plan_request", planCode: p.code }, `${p.name} talebin yöneticiye iletildi — onay bekleniyor`)}>
               {p.code === d.biz.planCode ? "Mevcut paketin" : "Paketi seç"}
             </Button>
           </Card>

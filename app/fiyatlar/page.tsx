@@ -3,6 +3,7 @@ import { getLocale } from "@/lib/locale";
 import { PublicShell, type SessionLite } from "@/components/Shell";
 import { Badge, Button, Card, Notice, Reveal, SectionHead } from "@/components/ds";
 import { Icon } from "@/components/icons";
+import { PlanRequestButton } from "@/components/PlanRequestButton";
 import { listPackagesPublic, listFeeRulesPublic } from "@/lib/queries";
 import { money, num } from "@/lib/money";
 
@@ -65,9 +66,11 @@ export default async function PricingPage() {
                     </p>
                   ) : null}
                 </div>
-                <Button href={p.priceMonthlyCents === 0 ? "/kayit?tip=isletme" : "/panel?s=plans"} className="mt-5 w-full" variant={p.code === "BOOST" ? "primary" : "secondary"}>
-                  {p.priceMonthlyCents === 0 ? "Ücretsiz başla" : "Paketi seç"}
-                </Button>
+                {p.priceMonthlyCents === 0 ? (
+                  <Button href="/kayit?tip=isletme" className="mt-5 w-full" variant="secondary">Ücretsiz başla</Button>
+                ) : (
+                  <PlanRequestButton planCode={p.code} planName={p.name} role={user?.role ?? null} variant={p.code === "BOOST" ? "primary" : "secondary"} label="Paketi seç" />
+                )}
               </Card>
             </Reveal>
           ))}

@@ -513,6 +513,22 @@ export default function AdminDashboard({ data, lang, currency, section, affiliat
   if (section === "reports") return <Reports data={data} lang={lang} currency={currency} />;
 
   if (section === "businesses") return <Wrap title="İşletmeler ve markalar" desc="Doğrulama, öne çıkarma ve paket ataması yönetici onayıyla yapılır.">
+    {data.planRequests?.length ? (
+      <Card className="mb-5 border-warning/50">
+        <p className="mb-3 text-[0.72rem] font-semibold uppercase tracking-[0.14em] text-muted">Bekleyen paket talepleri ({data.planRequests.length})</p>
+        <ul className="divide-y divide-line-soft">
+          {data.planRequests.map((r) => (
+            <li key={r.id} className="flex flex-wrap items-center justify-between gap-3 py-2.5">
+              <span className="text-[0.88rem]"><strong>{r.businessName}</strong> <span className="text-muted">{r.currentPlan} → </span><Badge tone="accent">{r.requestedPlan}</Badge>{r.createdAt ? <span className="ml-2 text-[0.74rem] text-muted">{shortDate(r.createdAt, lang)}</span> : null}</span>
+              <span className="inline-flex gap-1.5">
+                <Button size="sm" onClick={() => ask("Paket talebini onayla", `${r.businessName}: ${r.currentPlan} → ${r.requestedPlan}. Paket hemen değişir.`, () => act({ action: "plan_request_decide", id: r.id, approve: true }, "Paket talebi onaylandı"))}>Onayla</Button>
+                <Button size="sm" variant="secondary" onClick={() => ask("Paket talebini reddet", `${r.businessName} talebi reddedilecek.`, () => act({ action: "plan_request_decide", id: r.id, approve: false }, "Talep reddedildi"))}>Reddet</Button>
+              </span>
+            </li>
+          ))}
+        </ul>
+      </Card>
+    ) : null}
     <Table><thead><tr><Th>İşletme</Th><Th>Kategori</Th><Th>Konum</Th><Th>Paket</Th><Th>Kampanya</Th><Th>Durum</Th><Th right>İşlem</Th></tr></thead>
       <tbody>{data.businesses.map((b) => (<tr key={b.id}>
         <Td strong>{b.name}<span className="ml-2 text-[0.72rem] text-muted">{b.slug}</span></Td><Td>{b.category}</Td><Td>{b.district}, {b.city} · {b.country}</Td>

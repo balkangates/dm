@@ -1,3 +1,4 @@
+import NearbyBusinesses from "@/components/NearbyBusinesses";
 import Link from "next/link";
 import { Badge, Button, Card, Reveal, SectionHead, Ticker, VideoModule } from "@/components/ds";
 import { Icon } from "@/components/icons";
@@ -125,30 +126,15 @@ export function CustomerHome({
         </div>
       </section>
 
-      {/* ------------------------- POPÜLER İŞLETMELER ------------------------ */}
-      <section className="mx-auto mt-16 max-w-[1280px] px-4 sm:px-6">
-        <SectionHead eyebrow="Yerel işletmeler" title="Popüler mağaza ve markalar" desc="Doğrulanmış işletme profilleri, çalışma saatleri ve aktif kampanyaları." />
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {businesses.slice(0, 6).map((b, i) => (
-            <Reveal key={b.id} delay={i * 45}>
-              <Link href={`/isletme/${b.slug}`} className="card hover-lift group flex gap-4 p-4">
-                <img src={b.coverImage ?? fallbackCover} alt="" className="h-20 w-20 shrink-0 rounded-[3px] object-cover" />
-                <div className="min-w-0">
-                  <div className="flex items-center gap-1.5">
-                    <p className="truncate font-display text-[1rem] font-bold">{b.name}</p>
-                    {b.verified ? <Icon.verified size={14} className="shrink-0 text-positive" /> : null}
-                  </div>
-                  <p className="mt-0.5 truncate text-[0.8rem] text-muted">{b.subCategory ?? b.category} · {b.district}, {b.city}</p>
-                  <div className="mt-2 flex items-center gap-2">
-                    <Badge tone="neutral">★ {b.rating.toFixed(1)}</Badge>
-                    <Badge tone="accent">{b.planCode}</Badge>
-                  </div>
-                </div>
-              </Link>
-            </Reveal>
-          ))}
-        </div>
-      </section>
+      {/* ------------------- YEREL İŞLETMELER (konuma göre + sipariş) ------------------- */}
+      <NearbyBusinesses
+        fallbackCover={fallbackCover}
+        businesses={businesses.map((b) => ({
+          id: b.id, slug: b.slug, name: b.name, coverImage: b.coverImage, category: b.category, subCategory: b.subCategory,
+          district: b.district, city: b.city, rating: b.rating, verified: b.verified, planCode: b.planCode,
+          lat: b.lat, lng: b.lng, description: b.description,
+        }))}
+      />
 
       {/* ------------------------- ONLINE FIRSATLAR -------------------------- */}
       <section className="mx-auto mt-16 max-w-[1280px] px-4 sm:px-6">

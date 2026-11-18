@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { Icon } from "@/components/ds";
+import { clearGeo, requestGeo, setLocalSearch, useGeo } from "@/lib/geo";
 
 export default function HomeSearch({
   placeholder,
@@ -14,6 +15,8 @@ export default function HomeSearch({
   categories: string[];
 }) {
   const router = useRouter();
+  const geo = useGeo();
+  const geoOn = geo.status === "granted";
   const [q, setQ] = useState("");
   const [konum, setKonum] = useState("");
   const [kategori, setKategori] = useState("");
@@ -29,6 +32,12 @@ export default function HomeSearch({
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ kind: "filter_used", meta: { q, konum, kategori } }),
     }).catch(() => undefined);
+    // Konum açıksa: sonuç = konuma en yakın yerel işletmeler (aynı sayfada, mesafeye göre sıralı).
+    if (geoOn) {
+      setLocalSearch({ q: q.trim(), district: konum, category: kategori });
+      document.getElementById("yerel-isletmeler")?.scrollIntoView({ behavior: "smooth", block: "start" });
+      return;
+    }
     router.push(`/kampanyalar?${p.toString()}`);
   }
 
@@ -69,6 +78,22 @@ export default function HomeSearch({
         >
           Ara
         </button>
+      </div>
+      <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1.5 px-1 pb-0.5 text-[0.8rem]">
+        {geoOn ? (
+          <>
+            <span className="inline-flex items-center gap-1.5 font-semibold text-white"><Icon.pin size={13} className="text-accent" /> Konum açık — arama, sana en yakın işletmeleri listeler</span>
+            <button type="button" onClick={() => router.push(`/kampanyalar?${new URLSearchParams({ ...(q.trim() ? { q: q.trim() } : {}), ...(konum ? { konum } : {}), ...(kategori ? { kategori } : {}) }).toString()}`)} className="text-white/70 underline-offset-2 hover:text-white hover:underline">Kampanyalarda ara</button>
+            <button type="button" onClick={clearGeo} className="text-white/70 underline-offset-2 hover:text-white hover:underline">Konumu kapat</button>
+          </>
+        ) : geo.status === "asking" ? (
+          <span className="text-white/70" aria-live="polite">Konum alınıyor…</span>
+        ) : geo.status === "unsupported" ? null : (
+          <button type="button" onClick={requestGeo} className="inline-flex items-center gap-1.5 font-semibold text-white/85 hover:text-white">
+            <Icon.pin size={13} className="text-accent" /> Konumumu kullan · en yakın işletmeleri göster
+          </button>
+        )}
+        {geo.status === "denied" ? <span className="text-white/60">Konum izni verilmedi; tarayıcı ayarlarından açabilirsin.</span> : null}
       </div>
     </form>
   );

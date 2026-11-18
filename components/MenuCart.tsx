@@ -99,7 +99,7 @@ function AssistantBubble({ children }: { children: ReactNode }) {
 }
 
 export default function MenuCart({
-  business, products, campaigns, user, currency, lang,
+  business, products, campaigns, user, currency, lang, embedded = false,
 }: {
   business: {
     id: string;
@@ -117,6 +117,8 @@ export default function MenuCart({
   user: { name: string; phone?: string | null; address?: string | null } | null;
   currency: Currency;
   lang: Lang;
+  /** Popup içinde: yapışkan ofsetler sayfa başlığına göre değil popup gövdesine göre. */
+  embedded?: boolean;
 }) {
   const toast = useToast();
   const pathname = usePathname();
@@ -600,7 +602,7 @@ export default function MenuCart({
         {/* =============================== MENÜ =============================== */}
         <div className="min-w-0">
           {/* arama + kategori çubuğu (yapışkan) */}
-          <div className="sticky top-16 z-20 -mx-1 mb-4 border-b border-line bg-canvas/95 px-1 pb-3 pt-1 backdrop-blur">
+          <div className={`sticky ${embedded ? "top-0" : "top-16"} z-20 -mx-1 mb-4 border-b border-line bg-canvas/95 px-1 pb-3 pt-1 backdrop-blur`}>
             <div className="relative">
               <Icon.search size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted" />
               <Input className="pl-9" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Menüde ara" aria-label="Menüde ara" />
@@ -669,8 +671,8 @@ export default function MenuCart({
         </div>
 
         {/* ===================== SEPET / AKIŞ (masaüstü, yapışkan) ===================== */}
-        <aside className="hidden md:sticky md:top-20 md:block md:self-start" aria-label="Sipariş sepeti">
-          <div className="flex max-h-[calc(100vh-7rem)] flex-col overflow-hidden rounded-[10px] border-2 border-line bg-surface shadow-sm">
+        <aside className={`hidden md:sticky md:block md:self-start ${embedded ? "md:top-2" : "md:top-20"}`} aria-label="Sipariş sepeti">
+          <div className={`flex ${embedded ? "max-h-[calc(100vh-9rem)]" : "max-h-[calc(100vh-7rem)]"} flex-col overflow-hidden rounded-[10px] border-2 border-line bg-surface shadow-sm`}>
             <div className="flex items-center justify-between border-b-2 border-line px-4 py-3">
               <p className="flex items-center gap-2 font-display text-[1rem] font-bold"><CartSvg size={17} /> Siparişim</p>
               {count ? <span className="tabular rounded-full bg-accent px-2 py-0.5 text-[0.7rem] font-bold text-white">{count}</span> : null}

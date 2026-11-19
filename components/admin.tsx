@@ -836,7 +836,7 @@ function ConfirmDialog({ confirm, onClose }: { confirm: { title: string; desc: s
 
 const LLM_LABEL: Record<string, string> = { gemini: "Gemini (Google)", claude: "Claude (Anthropic)", openai: "ChatGPT (OpenAI)", openrouter: "OpenRouter" };
 const LLM_MODEL_HINT: Record<string, string> = {
-  gemini: "Örn. gemini-2.5-flash", claude: "Örn. claude-sonnet-5-5", openai: "Örn. gpt-4o-mini", openrouter: "Örn. anthropic/claude-sonnet-4.5",
+  gemini: "Örn. gemini-3.8-flash", claude: "Örn. claude-sonnet-5-5", openai: "Örn. gpt-4o-mini", openrouter: "Örn. anthropic/claude-sonnet-4.5",
 };
 
 /** AI sağlayıcıları: API anahtarı (yalnızca yazılır, geri okunmaz) + model + aktif/pasif. Anahtar tarayıcıya gönderilmez. */

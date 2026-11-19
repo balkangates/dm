@@ -32,5 +32,8 @@ revoke execute on function public.dv_llm_active() from public, anon;
 grant execute on function public.dv_llm_active() to authenticated;
 
 insert into public.llm_providers (provider, model) values
-  ('gemini', 'gemini-2.5-flash'), ('claude', 'claude-sonnet-5-5'), ('openai', 'gpt-4o-mini'), ('openrouter', 'anthropic/claude-sonnet-4.5')
+  ('gemini', 'gemini-3.8-flash'), ('claude', 'claude-sonnet-5-5'), ('openai', 'gpt-4o-mini'), ('openrouter', 'anthropic/claude-sonnet-4.5')
 on conflict (provider) do nothing;
+
+-- Daha önce 2.5-flash ile kaydedilmiş satır varsa güncelle (Google: 2.5-flash yeni kullanıcılara kapalı).
+update public.llm_providers set model = 'gemini-3.8-flash' where provider = 'gemini' and model = 'gemini-2.5-flash';

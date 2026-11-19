@@ -43,7 +43,11 @@ export async function generate(provider: LlmProvider, apiKey: string, model: str
   if (provider === "gemini") {
     res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`, {
       method: "POST", signal, headers: { "content-type": "application/json", "x-goog-api-key": apiKey },
-      body: JSON.stringify({ contents: [{ role: "user", parts: [{ text: prompt }] }], generationConfig: { maxOutputTokens: maxTokens, temperature: 0.7 } }),
+      body: JSON.stringify({ contents: [{ role: "user", parts: [{ text: prompt }] }], generationConfig: {
+          maxOutputTokens: maxTokens, temperature: 0.7,
+          // 2.5 Flash varsayılan olarak "düşünür"; düşünme token'ları çıktı bütçesini yer ve yanıt boş kalır. Flash için kapatılır.
+          ...(/2\.5-flash/.test(model) ? { thinkingConfig: { thinkingBudget: 0 } } : {}),
+        } }),
     });
   } else if (provider === "claude") {
     res = await fetch("https://api.anthropic.com/v1/messages", {
@@ -71,6 +75,10 @@ export async function generate(provider: LlmProvider, apiKey: string, model: str
   } else {
     text = (j.choices as Array<{ message?: { content?: string } }> | undefined)?.[0]?.message?.content ?? "";
   }
-  if (!text.trim()) throw new Error("Sağlayıcı boş yanıt döndürdü.");
+  if (!text.trim()) {
+    const fr = provider === "gemini" ? (j.candidates as Array<{ finishReason?: string }> | undefined)?.[0]?.finishReason : undefined;
+    const block = provider === "gemini" ? (j.promptFeedback as { blockReason?: string } | undefined)?.blockReason : undefined;
+    throw new Error(`Sağlayıcı boş yanıt döndürdü${fr ? ` (finishReason: ${fr})` : ""}${block ? ` (engellendi: ${block})` : ""}. Model adını ve anahtar kısıtlarını kontrol et.`);
+  }
   return text.trim();
 }

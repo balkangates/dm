@@ -1569,7 +1569,7 @@ export async function adminAction(user: SessionUserLite, body: Row) {
       if (!cur?.api_key_enc) throw new ActionError(422, "Önce API anahtarını kaydet.");
       try {
         const key = decryptKey(String(cur.api_key_enc));
-        const out = await generate(provider, key, String(cur.model || LLM_PROVIDERS.find((p) => p.id === provider)?.defaultModel), "Yalnızca 'tamam' yaz.", 20);
+        const out = await generate(provider, key, String(cur.model || LLM_PROVIDERS.find((p) => p.id === provider)?.defaultModel), "Yalnızca 'tamam' yaz.", 64);
         return Response.json({ ok: true, reply: out.slice(0, 60) });
       } catch (e) {
         throw new ActionError(502, `Bağlantı başarısız: ${e instanceof Error ? e.message : "bilinmeyen hata"}`);

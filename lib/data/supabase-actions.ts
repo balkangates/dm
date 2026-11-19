@@ -8,7 +8,9 @@
  *  * Finansal değerler istemciden SUNUCUDA sınırırlanır (eski rotalarla aynı).
  */
 import { geocodeAddress } from "@/lib/geocode";
-import { validCoord } from "@/lib/geodist";
+import { decryptKey, encryptKey, generate, isProvider, llmSecretConfigured, LLM_PROVIDERS } from "@/lib/llm";
+import { validCoord, haversineKm } from "@/lib/geodist";
+import { buildSuggestions, type GrowthProfileIn, type SuggestionHistory } from "@/lib/growth-engine";
 import { createClient } from "@/lib/supabase/server";
 import { trackEvent, logAudit } from "@/lib/queries";
 import { slugify } from "@/lib/money";
@@ -506,6 +508,10 @@ export async function campaignUpsert(actor: BusinessActorLite, body: Row) {
     is_sponsored: false,
   };
 
+  // Öneri motorundan gelen yeni kampanya işaretlenir (sonuç ölçümü için).
+  if (!id && typeof body.sourceSuggestion === "string" && /^[a-z]{2,20}$/.test(body.sourceSuggestion))
+    (values as Row).source_suggestion = body.sourceSuggestion;
+
   // (id / existing daha doğrulamanın hemen başında çözüldü — FAZ 1 sıralaması.)
 
   // İSTEK (d): görsel olmadan yayınlama YOK (istekte yeni görsel yoksa mevcut görsel korunur).
@@ -702,6 +708,33 @@ export async function businessAction(actor: BusinessActorLite, body: Row) {
     return Response.json({ ok: true, updated, inserted });
   }
 
+  /* Site içi reklam: AI "AD" içeriği yayınlanınca ad_campaigns (ACTIVE) kaydı oluşur/güncellenir; abonelik pakete dahildir (ek ücret yok). */
+  const syncAd = async (row: Row, live: boolean) => {
+    if (str(row.kind).toUpperCase() !== "AD") return;
+    const cid = str(row.id);
+    const { data: ex } = await client.from("ad_campaigns").select("id").eq("content_id", cid).maybeSingle();
+    if (!live) {
+      if (ex) await client.from("ad_campaigns").update({ status: "ENDED" }).eq("id", str(ex.id));
+      return;
+    }
+    const { data: biz } = await client.from("businesses").select("city, district, category").eq("id", actor.businessId).maybeSingle();
+    const fields = {
+      name: str(row.title).slice(0, 140) || "Reklam",
+      headline: str(row.title).slice(0, 140),
+      ad_body: str(row.body).slice(0, 1500),
+      cta: nulStr(row.cta),
+      status: "ACTIVE",
+      ends_at: null,
+    };
+    if (ex) await client.from("ad_campaigns").update(fields).eq("id", str(ex.id));
+    else
+      await client.from("ad_campaigns").insert({
+        business_id: actor.businessId, content_id: cid, source: "AI_CONTENT", placement: "ANASAYFA",
+        city: str(biz?.city) || "İstanbul", district: nulStr(biz?.district), category: nulStr(biz?.category),
+        budget_cents: 0, starts_at: new Date().toISOString(), ...fields,
+      });
+  };
+
   if (action === "content_decision") {
     const decision = String(body.decision ?? "");
     const status = decision === "publish" ? "PUBLISHED" : decision === "reject" ? "REJECTED" : "APPROVED";
@@ -715,7 +748,24 @@ export async function businessAction(actor: BusinessActorLite, body: Row) {
       .select("*")
       .maybeSingle();
     if (error) fail(error);
+    await syncAd(row as Row, status === "PUBLISHED");
     await logAudit(actor.email, actor.staffRole, `AI_CONTENT_${status}`, "ai_contents", str(row.id), {});
+    return Response.json({ ok: true, content: cam(updated as Row) });
+  }
+
+  if (action === "content_update") {
+    const id = String(body.id ?? "");
+    const { data: row } = await client.from("ai_contents").select("*").eq("id", id).maybeSingle();
+    if (!row || str(row.business_id) !== actor.businessId) throw new ActionError(404, "İçerik bulunamadı.");
+    const title = String(body.title ?? "").trim().slice(0, 140);
+    const text = String(body.body ?? "").trim().slice(0, 1500);
+    if (title.length < 3 || text.length < 3) throw new ActionError(422, "Başlık ve metin boş olamaz.");
+    const cta = String(body.cta ?? "").trim().slice(0, 80) || null;
+    const { data: updated, error } = await client.from("ai_contents").update({ title, body: text, cta }).eq("id", id).select("*").maybeSingle();
+    if (error) fail(error);
+    // Yayındaki reklamsa metin canlıda da güncellenir.
+    if (str(row.status) === "PUBLISHED") await syncAd(updated as Row, true);
+    await logAudit(actor.email, actor.staffRole, "AI_CONTENT_EDITED", "ai_contents", id, {});
     return Response.json({ ok: true, content: cam(updated as Row) });
   }
 
@@ -723,6 +773,7 @@ export async function businessAction(actor: BusinessActorLite, body: Row) {
     const id = String(body.id ?? "");
     const { data: row } = await client.from("ai_contents").select("*").eq("id", id).maybeSingle();
     if (!row || str(row.business_id) !== actor.businessId) throw new ActionError(404, "İçerik bulunamadı.");
+    await client.from("ad_campaigns").delete().eq("content_id", id);
     await client.from("ai_contents").delete().eq("id", id);
     await logAudit(actor.email, actor.staffRole, "AI_CONTENT_DELETED", "ai_contents", id, {});
     return Response.json({ ok: true });
@@ -910,6 +961,143 @@ export async function businessAction(actor: BusinessActorLite, body: Row) {
   /* FAZ 12C — Sipariş ayarları (MANAGER/OWNER): modlar (gel-al/rezerve/paket
    * servis; varsayılan kapalı — işletme isterse açar), "sipariş alıyorum"
    * anahtarı, otomatik fiş yazdırma, işletme KDV oranı (0/1/10/18/20). */
+  if (action === "growth_profile_save") {
+    const money = (v: unknown, max: number) => {
+      if (v === null || v === undefined || String(v).trim() === "") return null;
+      const x = Number(String(v).replace(",", "."));
+      if (!Number.isFinite(x) || x < 0 || x > max) throw new ActionError(422, "Sayısal alanlar geçersiz.");
+      return Math.round(x * 100);
+    };
+    const marginRaw = body.marginPct;
+    const margin = marginRaw === null || marginRaw === undefined || String(marginRaw).trim() === "" ? null : Number(String(marginRaw).replace(",", "."));
+    if (margin !== null && (!Number.isFinite(margin) || margin < 0 || margin > 100)) throw new ActionError(422, "Kâr marjı 0-100 arasında olmalı.");
+    const competitors = (Array.isArray(body.competitors) ? body.competitors : [])
+      .slice(0, 8)
+      .map((c) => ({ name: String((c as Row)?.name ?? "").trim().slice(0, 80), note: String((c as Row)?.note ?? "").trim().slice(0, 200) }))
+      .filter((c) => c.name);
+    const ALLOWED = ["TRENDYOL_GO", "YEMEKSEPETI", "GETIR", "MIGROS_YEMEK", "KENDI_KURYESI", "DIGER"];
+    const platforms = (Array.isArray(body.platforms) ? body.platforms : []).map(String).filter((p) => ALLOWED.includes(p));
+    const row = {
+      business_id: actor.businessId,
+      monthly_revenue_cents: money(body.monthlyRevenue, 1_000_000_000),
+      avg_basket_cents: money(body.avgBasket, 10_000_000),
+      margin_pct: margin,
+      busy_hours: nulStr(String(body.busyHours ?? "").trim().slice(0, 120)),
+      quiet_hours: nulStr(String(body.quietHours ?? "").trim().slice(0, 120)),
+      competitors,
+      platforms,
+      platform_discount_note: nulStr(String(body.platformDiscountNote ?? "").trim().slice(0, 300)),
+      goal: nulStr(String(body.goal ?? "").trim().slice(0, 200)),
+      updated_at: new Date().toISOString(),
+    };
+    const { error } = await client.from("business_growth_profiles").upsert(row, { onConflict: "business_id" });
+    if (error) fail(error);
+    await logAudit(actor.email, actor.staffRole, "GROWTH_PROFILE_SAVED", "business_growth_profiles", actor.businessId, {});
+    return Response.json({ ok: true });
+  }
+
+  if (action === "growth_suggest") {
+    const [{ data: biz }, { data: gp }] = await Promise.all([
+      client.from("businesses").select("id, name, district, category, lat, lng").eq("id", actor.businessId).maybeSingle(),
+      client.from("business_growth_profiles").select("*").eq("business_id", actor.businessId).maybeSingle(),
+    ]);
+    if (!biz) throw new ActionError(404, "İşletme bulunamadı.");
+    const radiusKm = 3;
+    const hasLocation = validCoord(Number(biz.lat), Number(biz.lng));
+    let nearby = 0, active = 0, withWindow = 0;
+    const discounts: number[] = [];
+    if (hasLocation) {
+      const { data: peers } = await client.from("businesses").select("id, lat, lng").eq("category", str(biz.category)).neq("id", actor.businessId).is("suspended_at", null).limit(400);
+      const near = ((peers ?? []) as Row[]).filter((b) => validCoord(Number(b.lat), Number(b.lng)) &&
+        haversineKm({ lat: Number(biz.lat), lng: Number(biz.lng) }, { lat: Number(b.lat), lng: Number(b.lng) }) <= radiusKm);
+      nearby = near.length;
+      if (near.length) {
+        const { data: camps } = await client.from("campaigns").select("discount_percent, time_start, status, moderation_status, business_id")
+          .in("business_id", near.map((b) => str(b.id))).eq("status", "PUBLISHED").eq("moderation_status", "APPROVED");
+        for (const c of (camps ?? []) as Row[]) {
+          active += 1;
+          if (Number(c.discount_percent) > 0) discounts.push(Number(c.discount_percent));
+          if (c.time_start) withWindow += 1;
+        }
+      }
+    }
+    const profile: GrowthProfileIn | null = gp ? {
+      monthlyRevenueCents: gp.monthly_revenue_cents == null ? null : Number(gp.monthly_revenue_cents),
+      avgBasketCents: gp.avg_basket_cents == null ? null : Number(gp.avg_basket_cents),
+      marginPct: gp.margin_pct == null ? null : Number(gp.margin_pct),
+      busyHours: nulStr(gp.busy_hours), quietHours: nulStr(gp.quiet_hours),
+      competitors: ((gp.competitors ?? []) as Array<{ name?: string; note?: string }>).map((c) => ({ name: String(c.name ?? ""), note: String(c.note ?? "") })),
+      platforms: ((gp.platforms ?? []) as string[]).map(String),
+      platformDiscountNote: nulStr(gp.platform_discount_note), goal: nulStr(gp.goal),
+    } : null;
+    // Faz 3: öneriden oluşturulan kampanyaların toplam sonucu.
+    const history: SuggestionHistory = {};
+    {
+      const { data: mine } = await client.from("campaigns").select("source_suggestion, views, clicks, redemptions").eq("business_id", actor.businessId).not("source_suggestion", "is", null);
+      for (const c of (mine ?? []) as Row[]) {
+        const k = str(c.source_suggestion);
+        const h = (history[k] ??= { campaigns: 0, views: 0, clicks: 0, redemptions: 0 });
+        h.campaigns += 1; h.views += Number(c.views) || 0; h.clicks += Number(c.clicks) || 0; h.redemptions += Number(c.redemptions) || 0;
+      }
+    }
+    const result = buildSuggestions({
+      history,
+      businessName: str(biz.name), district: str(biz.district), profile,
+      market: {
+        hasLocation, radiusKm, nearbyBusinesses: nearby, activeCampaigns: active, withTimeWindow: withWindow,
+        avgDiscountPercent: discounts.length ? discounts.reduce((a, b) => a + b, 0) / discounts.length : null,
+        maxDiscountPercent: discounts.length ? Math.max(...discounts) : null,
+      },
+    });
+    return Response.json({ ok: true, ...result });
+  }
+
+  if (action === "growth_polish_ad") {
+    const title = String(body.title ?? "").trim().slice(0, 140);
+    const text = String(body.body ?? "").trim().slice(0, 600);
+    if (title.length < 3 || text.length < 3) throw new ActionError(422, "Uyarlanacak metin boş.");
+    const { data: cfgs, error: cfgErr } = await client.rpc("dv_llm_active");
+    if (cfgErr) fail(cfgErr);
+    const order = ["claude", "gemini", "openai", "openrouter"];
+    const cfg = ((cfgs ?? []) as Row[]).sort((a, b) => order.indexOf(str(a.provider)) - order.indexOf(str(b.provider)))[0];
+    if (!cfg || !isProvider(cfg.provider)) throw new ActionError(409, "Aktif bir AI sağlayıcısı yok. Yönetici AI ayarlarından bir sağlayıcıyı aktif etmeli.");
+    const { data: biz } = await client.from("businesses").select("name, district, category, description").eq("id", actor.businessId).maybeSingle();
+    const prompt = [
+      "Sen bir yerel işletme reklam metin yazarısın. Aşağıdaki reklam taslağını işletmenin diline uyarla.",
+      `İşletme: ${str(biz?.name)} (${str(biz?.category)}, ${str(biz?.district)}). Tanım: ${str(biz?.description).slice(0, 300)}`,
+      "KURALLAR: Türkçe yaz. Sayıları, indirim oranlarını, saatleri ve koşulları AYNEN koru. Satış/artış garantisi, 'en iyi', 'tek' gibi doğrulanamaz iddialar ekleme. Başlık en çok 70 karakter, metin en çok 280 karakter, CTA en çok 30 karakter.",
+      'Yalnızca şu JSON\'u döndür: {"title":"...","body":"...","cta":"..."}',
+      `Taslak başlık: ${title}`, `Taslak metin: ${text}`, `Taslak CTA: ${str(body.cta)}`,
+    ].join("\n");
+    try {
+      const raw = await generate(cfg.provider, decryptKey(str(cfg.api_key_enc)), str(cfg.model), prompt, 500);
+      const m = /\{[\s\S]*\}/.exec(raw);
+      const j = m ? (JSON.parse(m[0]) as Row) : null;
+      const t2 = String(j?.title ?? "").trim().slice(0, 140), b2 = String(j?.body ?? "").trim().slice(0, 600);
+      if (!t2 || !b2) throw new Error("Yanıt çözümlenemedi.");
+      // Güvenlik: orijinaldeki sayılar korunmalı (indirim/saat değişmesin).
+      const nums = (x: string) => (x.match(/\d+/g) ?? []).sort().join(",");
+      if (nums(title + " " + text) !== nums(t2 + " " + b2)) throw new Error("Yanıt sayıları/oranları değiştirdi; reddedildi.");
+      await logAudit(actor.email, actor.staffRole, "GROWTH_AD_POLISHED", "businesses", actor.businessId, { provider: cfg.provider });
+      return Response.json({ ok: true, provider: cfg.provider, ad: { title: t2, body: b2, cta: String(j?.cta ?? "").trim().slice(0, 80) || str(body.cta) } });
+    } catch (e) {
+      throw new ActionError(502, `AI uyarlaması başarısız: ${e instanceof Error ? e.message : "bilinmeyen hata"}`);
+    }
+  }
+
+  if (action === "growth_save_ad") {
+    const title = String(body.title ?? "").trim().slice(0, 140);
+    const text = String(body.body ?? "").trim().slice(0, 1500);
+    if (title.length < 3 || text.length < 3) throw new ActionError(422, "Reklam metni boş olamaz.");
+    const { error } = await client.from("ai_contents").insert({
+      business_id: actor.businessId, kind: "AD", platform: "DampingVar Reklam Ağı", title, body: text,
+      cta: nulStr(String(body.cta ?? "").trim().slice(0, 80)), variant: "M", status: "DRAFT", created_by: "ENGINE",
+    });
+    if (error) fail(error);
+    await logAudit(actor.email, actor.staffRole, "GROWTH_AD_DRAFT_SAVED", "ai_contents", actor.businessId, {});
+    return Response.json({ ok: true });
+  }
+
   if (action === "plan_request") {
     if (actor.staffRole !== "OWNER" && actor.staffRole !== "MANAGER") throw new ActionError(403, "Paket talebi için işletme sahibi veya yönetici olmalısın.");
     const plan = String(body.planCode ?? "");
@@ -1035,11 +1223,7 @@ export async function businessAction(actor: BusinessActorLite, body: Row) {
   }
 
   if (action === "ad_request") {
-    // FAZ 4 (onaylı): bütçe BOŞ GEÇİLEMEZ — AI brief'i bütçe bilerek doldurmaz,
-    // onay sırasında kullanıcı girer. Reklam 0 bütçeyle anlamsız olduğundan >0 şart.
-    const budgetRaw = body.budgetCents;
-    if (budgetRaw === undefined || budgetRaw === null || String(budgetRaw).trim() === "" || !Number.isFinite(Number(budgetRaw)) || Number(budgetRaw) <= 0)
-      throw new ActionError(422, "Reklam bütçesi girilmelidir (0 olamaz); talebi göndermeden önce bütçeyi doldurun.");
+    // Site içi reklam abonelik paketine dahildir: bütçe isteğe bağlıdır (boş = 0, ekstra ücret yok).
     const { data: row, error } = await client
       .from("ad_campaigns")
       .insert({
@@ -1049,7 +1233,7 @@ export async function businessAction(actor: BusinessActorLite, body: Row) {
         city: String(body.city ?? "İstanbul"),
         district: String(body.district ?? "").slice(0, 80) || null,
         category: String(body.category ?? "").slice(0, 80) || null,
-        budget_cents: Math.max(0, Math.min(100_000_000, Math.round(Number(body.budgetCents ?? 0)))),
+        budget_cents: Math.max(0, Math.min(100_000_000, Math.round(Number(body.budgetCents ?? 0) || 0))),
         // AI Büyüme Asistanı brief'i (isteğe bağlı; migration 0010 ile eklenen alan).
         brief: body.brief ? String(body.brief).slice(0, 2000) : null,
         // Reklam, yönetici onayı olmadan yayına girmez.
@@ -1354,6 +1538,42 @@ export async function adminAction(user: SessionUserLite, body: Row) {
       if (error) fail(error);
       await logAudit(user.email, "ADMIN", body.approve === true ? "PLAN_REQUEST_APPROVED" : "PLAN_REQUEST_REJECTED", "plan_requests", id, data as Row);
       return Response.json({ ok: true, result: data });
+    }
+    case "llm_save": {
+      const provider = body.provider;
+      if (!isProvider(provider)) throw new ActionError(400, "Geçersiz sağlayıcı.");
+      const patch: Row = { updated_at: new Date().toISOString(), updated_by: user.email };
+      if (typeof body.enabled === "boolean") patch.enabled = body.enabled;
+      if (typeof body.model === "string") patch.model = body.model.trim().slice(0, 120) || LLM_PROVIDERS.find((p) => p.id === provider)?.defaultModel;
+      const apiKey = typeof body.apiKey === "string" ? body.apiKey.trim() : "";
+      if (apiKey) {
+        if (apiKey.length < 12 || apiKey.length > 400 || /\s/.test(apiKey)) throw new ActionError(422, "API anahtarı geçersiz görünüyor.");
+        if (!llmSecretConfigured()) throw new ActionError(500, "Sunucuda LLM_KEY_SECRET ortam değişkeni tanımlı değil (en az 16 karakter). Önce onu ekleyip siteyi yeniden dağıtın; anahtar şifrelenemeden kaydedilmez.");
+        patch.api_key_enc = encryptKey(apiKey);
+        patch.key_last4 = apiKey.slice(-4);
+      }
+      if (patch.enabled === true && !apiKey) {
+        const { data: cur } = await client.from("llm_providers").select("api_key_enc").eq("provider", provider).maybeSingle();
+        if (!cur?.api_key_enc) throw new ActionError(422, "Aktif etmek için önce API anahtarı gir.");
+      }
+      const { error } = await client.from("llm_providers").upsert({ provider, ...patch }, { onConflict: "provider" });
+      if (error) fail(error);
+      // Anahtar log'a yazılmaz.
+      await logAudit(user.email, "ADMIN", "LLM_PROVIDER_SAVED", "llm_providers", String(provider), { enabled: patch.enabled ?? null, keyChanged: Boolean(apiKey), model: patch.model ?? null });
+      return Response.json({ ok: true });
+    }
+    case "llm_test": {
+      const provider = body.provider;
+      if (!isProvider(provider)) throw new ActionError(400, "Geçersiz sağlayıcı.");
+      const { data: cur } = await client.from("llm_providers").select("api_key_enc, model").eq("provider", provider).maybeSingle();
+      if (!cur?.api_key_enc) throw new ActionError(422, "Önce API anahtarını kaydet.");
+      try {
+        const key = decryptKey(String(cur.api_key_enc));
+        const out = await generate(provider, key, String(cur.model || LLM_PROVIDERS.find((p) => p.id === provider)?.defaultModel), "Yalnızca 'tamam' yaz.", 20);
+        return Response.json({ ok: true, reply: out.slice(0, 60) });
+      } catch (e) {
+        throw new ActionError(502, `Bağlantı başarısız: ${e instanceof Error ? e.message : "bilinmeyen hata"}`);
+      }
     }
     case "package_update": {
       const code = String(body.code ?? id);

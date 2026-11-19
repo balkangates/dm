@@ -576,6 +576,8 @@ export async function getBusinessData(businessId: string, days = 14) {
   const since = Date.now() - days * 86400000;
   const { data: biz } = await client.from("businesses").select("*").eq("id", businessId).maybeSingle();
   if (!biz) return null;
+  // Büyüme profili (işletmenin elle girdiği ciro/rakip/platform verisi); tablo yoksa boş döner.
+  const { data: gpRow } = await client.from("business_growth_profiles").select("*").eq("business_id", businessId).maybeSingle();
 
   const [hours, camps, qr, usages, staff, ads, contents, plans, pkgs, invs, feeRules, bonusRows, events, labels, refTotal, prods, svcs, growthRows, videoCount, orderRows, mediaRows] =
     await Promise.all([
@@ -816,11 +818,27 @@ export async function getBusinessData(businessId: string, days = 14) {
       currency: "TRY",
       status: str(a.status),
       brief: nul(a.brief),
+      headline: nul(a.headline),
+      adBody: nul(a.ad_body),
+      source: str(a.source ?? "FORM"),
       impressions: n(a.impressions),
       clicks: n(a.clicks),
       startsAt: iso(a.starts_at),
       endsAt: iso(a.ends_at),
     })),
+    growthProfile: gpRow
+      ? {
+          monthlyRevenueCents: gpRow.monthly_revenue_cents == null ? null : Number(gpRow.monthly_revenue_cents),
+          avgBasketCents: gpRow.avg_basket_cents == null ? null : Number(gpRow.avg_basket_cents),
+          marginPct: gpRow.margin_pct == null ? null : Number(gpRow.margin_pct),
+          busyHours: nul(gpRow.busy_hours),
+          quietHours: nul(gpRow.quiet_hours),
+          competitors: ((gpRow.competitors ?? []) as Array<{ name?: string; note?: string }>).map((c) => ({ name: String(c.name ?? ""), note: String(c.note ?? "") })),
+          platforms: ((gpRow.platforms ?? []) as string[]).map(String),
+          platformDiscountNote: nul(gpRow.platform_discount_note),
+          goal: nul(gpRow.goal),
+        }
+      : null,
     contents: contentRows.map((c) => ({
       id: str(c.id),
       kind: str(c.kind),
@@ -942,7 +960,7 @@ export async function getBusinessData(businessId: string, days = 14) {
 
 export async function getAdminData() {
   const client = await sb();
-  const [biz, profiles, camps, usages, refs, bonuses, policies, pkgs, feeRules, invs, ads, fraud, audit, aiSet, contents, events, reqs, staff, planReqs, ords] =
+  const [biz, profiles, camps, usages, refs, bonuses, policies, pkgs, feeRules, invs, ads, fraud, audit, aiSet, contents, events, reqs, staff, planReqs, llmRows, ords] =
     await Promise.all([
       client.from("businesses").select("*").order("created_at", { ascending: false }),
       client.from("profiles").select("*").order("created_at", { ascending: false }),
@@ -963,6 +981,7 @@ export async function getAdminData() {
       client.from("business_requests").select("*").eq("status", "pending"),
       client.from("business_staff").select("*"),
       client.from("plan_requests").select("*").eq("status", "pending").order("created_at", { ascending: false }),
+      client.from("llm_providers").select("provider, enabled, key_last4, api_key_enc, model, updated_at"),
       // FAZ 12A — platform geneli sipariş izleme (sesli/web).
       client.from("orders").select("*").order("created_at", { ascending: false }).limit(200),
     ]);
@@ -1064,6 +1083,14 @@ export async function getAdminData() {
       usages: usageRows.filter((x) => str(x.customer_id) === str(u.id)).length,
     })),
     // FAZ 10 — bekleyen "İşletme Aç" talepleri (userId → talep özeti)
+    llmProviders: ((llmRows.data ?? []) as Row[]).map((r) => ({
+      provider: str(r.provider),
+      enabled: r.enabled === true,
+      hasKey: Boolean(r.api_key_enc),
+      last4: nul(r.key_last4),
+      model: nul(r.model),
+      updatedAt: iso(r.updated_at),
+    })),
     planRequests: planReqRows.map((r) => ({
       id: str(r.id),
       businessId: str(r.business_id),
@@ -1231,6 +1258,9 @@ export async function getAdminData() {
       impressions: n(a.impressions),
       clicks: n(a.clicks),
       budgetCents: n(a.budget_cents),
+      headline: nul(a.headline),
+      adBody: nul(a.ad_body),
+      source: str(a.source ?? "FORM"),
       businessName: pickStr(bizRows, a.business_id, "name"),
     })),
     fraud: fraudRows.map((f) => ({
@@ -1663,3 +1693,38 @@ export const getSiteMedia = cache(async (): Promise<SiteMediaMap> => {
     return {};
   }
 });
+
+
+/** Ana sayfa: yayındaki site içi reklamlar (abonelik paketine dahil; ek ücret yok). */
+export async function listActiveAds(limit = 6) {
+  const client = await sb();
+  const { data } = await client
+    .from("ad_campaigns")
+    .select("id, business_id, name, headline, ad_body, cta, placement, district, ends_at")
+    .eq("status", "ACTIVE")
+    .order("starts_at", { ascending: false })
+    .limit(limit * 3);
+  const rows = ((data ?? []) as Row[]).filter((a) => !a.ends_at || new Date(String(a.ends_at)) > new Date());
+  const ids = [...new Set(rows.map((a) => str(a.business_id)))];
+  const { data: bz } = ids.length
+    ? await client.from("businesses").select("id, slug, name, district, city, cover_image, suspended_at").in("id", ids)
+    : { data: [] as Row[] };
+  const bm = new Map(((bz ?? []) as Row[]).filter((b) => !b.suspended_at).map((b) => [str(b.id), b]));
+  return rows
+    .filter((a) => bm.has(str(a.business_id)))
+    .slice(0, limit)
+    .map((a) => {
+      const b = bm.get(str(a.business_id)) as Row;
+      return {
+        id: str(a.id),
+        title: str(a.headline) || str(a.name),
+        body: nul(a.ad_body),
+        cta: nul(a.cta),
+        businessName: str(b.name),
+        slug: str(b.slug),
+        district: str(b.district),
+        city: str(b.city),
+        coverImage: nul(b.cover_image),
+      };
+    });
+}

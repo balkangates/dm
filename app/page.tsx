@@ -10,7 +10,7 @@ import {
   BusinessFlowPanel, BusinessHome, CustomerHome, FinancialBoundary, ModeTicker, type Brand,
 } from "@/components/HomeModes";
 import {
-  bumpOfferImpressions, ensureSeeded, listBusinesses, listCampaignCards, listCategories, listDistricts, listOffers, listVideos, getSiteMedia,
+  bumpOfferImpressions, ensureSeeded, listBusinesses, listCampaignCards, listCategories, listDistricts, listOffers, listVideos, getSiteMedia, listActiveAds,
 } from "@/lib/queries";
 import { HeroBackdrop } from "@/components/SiteMedia";
 import { DEFAULT_COVER } from "@/lib/siteMedia";
@@ -51,9 +51,9 @@ export default async function HomePage({ searchParams }: { searchParams: Promise
   const data = isBusiness
     ? null
     : await Promise.all([
-        listCampaignCards({ limit: 24 }), listBusinesses(), listCategories(), listDistricts(), listOffers({ limit: 6 }), listVideos(),
+        listCampaignCards({ limit: 24 }), listBusinesses(), listCategories(), listDistricts(), listOffers({ limit: 6 }), listVideos(), listActiveAds(6),
       ]);
-  const [campaigns, businesses, categories, districts, offers, videos] = data ?? [[], [], [], [], [], []];
+  const [campaigns, businesses, categories, districts, offers, videos, ads] = data ?? [[], [], [], [], [], [], []];
 
   if (!isBusiness) await bumpOfferImpressions(offers.map((o) => o.id));
   const brands = offers.reduce<Brand[]>((acc, o) => {
@@ -186,6 +186,7 @@ export default async function HomePage({ searchParams }: { searchParams: Promise
           categories={categories}
           districts={districts}
           offers={offers}
+          ads={ads}
           brands={brands}
           videos={videos}
           fallbackCover={fallbackCover}

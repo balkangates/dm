@@ -1740,7 +1740,7 @@ function AdvertisingSection({ d, lang, post }: { d: BD; lang: Lang; post: (r: st
             <Field label="Yerleşim"><Select value={f.placement} onChange={(e) => setF({ ...f, placement: e.target.value })}>
               {["ANASAYFA", "KATEGORI", "BOLGE", "KAMPANYA", "ARAMA"].map((v) => <option key={v} value={v}>{v}</option>)}</Select></Field>
             <Field label="İlçe"><Input value={f.district} onChange={(e) => setF({ ...f, district: e.target.value })} /></Field>
-            <Field label="Bütçe (birim)"><Input type="number" min={0} value={f.budgetCents / 100} onChange={(e) => setF({ ...f, budgetCents: Math.round(Number(e.target.value) * 100) })} /></Field>
+            <Field label="Bütçe (isteğe bağlı)"><Input type="number" min={0} value={f.budgetCents / 100} onChange={(e) => setF({ ...f, budgetCents: Math.round(Number(e.target.value) * 100) })} /></Field>
             <Field label="Bitiş"><Input type="date" value={f.endsAt} onChange={(e) => setF({ ...f, endsAt: e.target.value })} /></Field>
             <Field label="Reklam metni ve hedefleme brief'i" hint="İsteğe bağlı — AI Büyüme Asistanı taslağı otomatik doldurur (amaç, hedef kitle, metin, görsel ihtiyacı)." className="sm:col-span-2">
               <Textarea rows={4} value={brief} onChange={(e) => setBrief(e.target.value)} />
@@ -1748,7 +1748,7 @@ function AdvertisingSection({ d, lang, post }: { d: BD; lang: Lang; post: (r: st
             <Button type="submit">Talebi gönder</Button>
           </form>
           <Notice tone="warning" className="mt-4" icon={<Icon.alert size={16} />}>
-            Talep, yönetici onayı olmadan yayına girmez. Onaylanmamış reklam için ücret tahakkuk etmez.
+            Site içi reklam ve kampanyalar abonelik paketine dahildir; ekstra ücret uygulanmaz. Form ile gönderilen talepler yönetici onayıyla yayına girer; AI metni “Onayla ve yayınla” ile doğrudan yayına alınır.
           </Notice>
         </Card>
       </div>
@@ -2005,6 +2005,7 @@ function AiSection({ d, post, videos }: { d: BD; post: (r: string, b: Record<str
       <DashSectionHead eyebrow="AI Pazarlama" title="Bugün işletmen için ne üretelim?"
         desc="AI yalnızca taslak üretir. Onaylamadan hiçbir içerik yayınlanmaz, ücretli reklam başlamaz ve kampanya koşulu değişmez." />
       <GrowthAssistant d={d} post={post} videos={videos} />
+      <GrowthProfileCard d={d} post={post} />
       <Card className="mb-6">
         <Field label="Hedefin"><Input value={goal} onChange={(e) => setGoal(e.target.value)} /></Field>
         <div className="mt-4 grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
@@ -2019,27 +2020,183 @@ function AiSection({ d, post, videos }: { d: BD; post: (r: string, b: Record<str
       </Notice>
       <div className="space-y-4">
         {d.contents.map((c) => (
-          <Card key={c.id}>
-            <div className="flex flex-wrap items-center gap-2">
-              <Badge tone="neutral">{c.kind}</Badge>{c.variant ? <Badge tone="accent">Varyant {c.variant}</Badge> : null}
-              <span className="text-[0.76rem] text-muted">{c.platform}</span>
-              <span className="ml-auto"><StatusBadge status={c.status} /></span>
-            </div>
-            <p className="mt-2.5 font-display text-[1.02rem] font-bold">{c.title}</p>
-            <pre className="mt-2 whitespace-pre-wrap font-sans text-[0.85rem] leading-relaxed text-muted">{c.body}</pre>
-            {c.cta ? <p className="mt-2 text-[0.82rem] font-semibold text-accent">CTA: {c.cta}</p> : null}
-            <div className="mt-3.5 flex flex-wrap gap-2">
-              <Button size="sm" variant="secondary" icon={<Icon.check size={14} />} onClick={() => void post("/api/business", { action: "content_decision", id: c.id, decision: "approve" }, "Onaylandı")}>Onayla</Button>
-              <Button size="sm" icon={<Icon.share size={14} />} onClick={() => void post("/api/business", { action: "content_decision", id: c.id, decision: "publish" }, "Yayınlandı")}>Onayla ve yayınla</Button>
-              <Button size="sm" variant="danger" onClick={() => void post("/api/business", { action: "content_decision", id: c.id, decision: "reject" }, "Reddedildi")}>Reddet</Button>
-              <Button size="sm" variant="ghost" icon={<Icon.copy size={14} />} onClick={() => navigator.clipboard?.writeText(c.body).catch(() => undefined)}>Metni kopyala</Button>
-              <Button size="sm" variant="ghost" icon={<Icon.trash size={14} />} onClick={() => void post("/api/business", { action: "content_delete", id: c.id }, "Silindi")}>Sil</Button>
-            </div>
-          </Card>
+          <ContentCard key={c.id} c={c} post={post} />
         ))}
         {d.contents.length === 0 ? <EmptyState icon={<Icon.spark size={22} />} title="Henüz AI içeriği yok" desc="Yukarıdaki seçeneklerden biriyle ilk taslağını üret." /> : null}
       </div>
     </div>
+  );
+}
+
+const PLATFORM_OPTIONS: Array<[string, string]> = [
+  ["TRENDYOL_GO", "Trendyol Go"], ["YEMEKSEPETI", "Yemeksepeti"], ["GETIR", "Getir Yemek"],
+  ["MIGROS_YEMEK", "Migros Yemek"], ["KENDI_KURYESI", "Kendi kuryem"], ["DIGER", "Diğer"],
+];
+
+/** İşletmenin ELLE girdiği büyüme profili: AI kampanya/reklam önerilerinin girdisi (ciro, rakip, platform). */
+function GrowthProfileCard({ d, post }: { d: BD; post: (r: string, b: Record<string, unknown>, m: string) => Promise<unknown> }) {
+  const g = d.growthProfile;
+  const [open, setOpen] = useState(!g);
+  const [busy, setBusy] = useState(false);
+  const [f, setF] = useState({
+    monthlyRevenue: g?.monthlyRevenueCents != null ? String(g.monthlyRevenueCents / 100) : "",
+    avgBasket: g?.avgBasketCents != null ? String(g.avgBasketCents / 100) : "",
+    marginPct: g?.marginPct != null ? String(g.marginPct) : "",
+    busyHours: g?.busyHours ?? "",
+    quietHours: g?.quietHours ?? "",
+    platformDiscountNote: g?.platformDiscountNote ?? "",
+    goal: g?.goal ?? "",
+  });
+  const [platforms, setPlatforms] = useState<string[]>(g?.platforms ?? []);
+  const [comps, setComps] = useState<Array<{ name: string; note: string }>>(g?.competitors?.length ? g.competitors : [{ name: "", note: "" }]);
+  type GSug = { id: string; title: string; rationale: string[]; guard: string; fields: Record<string, unknown>; ad: { title: string; body: string; cta: string }; history?: { campaigns: number; rate: number | null } };
+  const [sug, setSug] = useState<{ suggestions: GSug[]; warnings: string[]; market: string } | null>(null);
+  const [sBusy, setSBusy] = useState(false);
+  const [adOverride, setAdOverride] = useState<Record<string, { title: string; body: string; cta: string }>>({});
+  const [polishing, setPolishing] = useState<string | null>(null);
+  const toast = useToast();
+  async function polish(id: string, ad: { title: string; body: string; cta: string }) {
+    setPolishing(id);
+    const res = await fetch("/api/business", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: "growth_polish_ad", ...ad }) });
+    const j = await res.json().catch(() => ({ ok: false }));
+    setPolishing(null);
+    if (j.ok) { setAdOverride((m) => ({ ...m, [id]: j.ad })); toast.push({ title: "Metin AI ile uyarlandı", desc: "Oranlar ve saatler korunur; gözden geçirip taslak kaydet.", tone: "positive" }); }
+    else toast.push({ title: j.error ?? "AI uyarlaması başarısız", tone: "danger" });
+  }
+  return (
+    <Card className="mb-6">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <p className="font-display text-[1rem] font-bold">Büyüme profilim</p>
+          <p className="mt-0.5 text-[0.8rem] text-muted">Bu bilgileri sen girersin; AI kampanya ve reklam önerileri bunlara, konumuna ve çevrendeki işletmelere göre hazırlanır. Yalnızca sen ve yönetici görür.</p>
+        </div>
+        <Button size="sm" variant="secondary" onClick={() => setOpen(!open)}>{open ? "Kapat" : g ? "Düzenle" : "Doldur"}</Button>
+      </div>
+      {open ? (
+        <form className="mt-4 grid gap-4 sm:grid-cols-2" onSubmit={async (e) => {
+          e.preventDefault(); setBusy(true);
+          await post("/api/business", { action: "growth_profile_save", ...f, platforms, competitors: comps.filter((c) => c.name.trim()) }, "Büyüme profili kaydedildi");
+          setBusy(false);
+        }}>
+          <Field label="Aylık ortalama ciro" hint="Yaklaşık değer yeterli."><Input inputMode="decimal" value={f.monthlyRevenue} onChange={(e) => setF({ ...f, monthlyRevenue: e.target.value })} placeholder="Örn. 250000" /></Field>
+          <Field label="Ortalama sepet tutarı"><Input inputMode="decimal" value={f.avgBasket} onChange={(e) => setF({ ...f, avgBasket: e.target.value })} placeholder="Örn. 320" /></Field>
+          <Field label="Ortalama kâr marjı (%)" hint="İndirim önerileri bu marjın altına düşmez."><Input inputMode="decimal" value={f.marginPct} onChange={(e) => setF({ ...f, marginPct: e.target.value })} placeholder="Örn. 25" /></Field>
+          <Field label="Hedefin"><Input value={f.goal} maxLength={200} onChange={(e) => setF({ ...f, goal: e.target.value })} placeholder="Örn. hafta içi öğleyi doldurmak" /></Field>
+          <Field label="Yoğun saatler"><Input value={f.busyHours} maxLength={120} onChange={(e) => setF({ ...f, busyHours: e.target.value })} placeholder="Örn. 12:00-14:00, 19:00-21:30" /></Field>
+          <Field label="Boş / sakin saatler"><Input value={f.quietHours} maxLength={120} onChange={(e) => setF({ ...f, quietHours: e.target.value })} placeholder="Örn. 15:00-18:00" /></Field>
+          <div className="sm:col-span-2">
+            <p className="mb-2 text-[0.78rem] font-semibold">Bulunduğun yemek platformları</p>
+            <div className="flex flex-wrap gap-x-5 gap-y-2">
+              {PLATFORM_OPTIONS.map(([k, l]) => (
+                <Checkbox key={k} checked={platforms.includes(k)} onChange={(v) => setPlatforms(v ? [...platforms, k] : platforms.filter((x) => x !== k))} label={l} />
+              ))}
+            </div>
+          </div>
+          <Field label="Platformlarda verdiğin indirim / kampanyalar" className="sm:col-span-2" hint="Örn. “Trendyol Go’da hafta sonu %15, 300 TL üzeri ücretsiz teslimat”. Metni olduğu gibi yaz."><Textarea rows={2} value={f.platformDiscountNote} maxLength={300} onChange={(e) => setF({ ...f, platformDiscountNote: e.target.value })} /></Field>
+          <div className="sm:col-span-2">
+            <p className="mb-2 text-[0.78rem] font-semibold">Rakip işletmeler <span className="font-normal text-muted">(en fazla 8)</span></p>
+            <div className="space-y-2">
+              {comps.map((c, i) => (
+                <div key={i} className="grid gap-2 sm:grid-cols-[1fr_2fr_auto]">
+                  <Input value={c.name} maxLength={80} placeholder="Rakip adı" onChange={(e) => setComps(comps.map((x, j) => (j === i ? { ...x, name: e.target.value } : x)))} />
+                  <Input value={c.note} maxLength={200} placeholder="Kampanyası / fiyat seviyesi / notun" onChange={(e) => setComps(comps.map((x, j) => (j === i ? { ...x, note: e.target.value } : x)))} />
+                  <Button type="button" size="sm" variant="ghost" onClick={() => setComps(comps.length > 1 ? comps.filter((_, j) => j !== i) : [{ name: "", note: "" }])}>Kaldır</Button>
+                </div>
+              ))}
+              {comps.length < 8 ? <Button type="button" size="sm" variant="secondary" onClick={() => setComps([...comps, { name: "", note: "" }])}>Rakip ekle</Button> : null}
+            </div>
+          </div>
+          <div className="sm:col-span-2"><Button type="submit" loading={busy}>Profili kaydet</Button></div>
+        </form>
+      ) : null}
+      {g ? (
+        <div className="mt-4 border-t border-line-soft pt-4">
+          <Button size="sm" loading={sBusy} icon={<Icon.spark size={14} />} onClick={async () => {
+            setSBusy(true);
+            const res = await fetch("/api/business", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: "growth_suggest" }) });
+            const j = await res.json().catch(() => ({ ok: false }));
+            setSBusy(false);
+            if (j.ok) setSug(j as { suggestions: GSug[]; warnings: string[]; market: string }); else toast.push({ title: j.error ?? "Öneriler hazırlanamadı", tone: "danger" });
+          }}>Kampanya ve reklam önerilerini hazırla</Button>
+          {sug ? (
+            <div className="mt-4 space-y-3">
+              {sug.market ? <Notice tone="info" icon={<Icon.info size={16} />}>{sug.market}</Notice> : null}
+              {sug.warnings.map((w) => <Notice key={w} tone="warning" icon={<Icon.alert size={16} />}>{w}</Notice>)}
+              {sug.suggestions.map((s2) => (
+                <div key={s2.id} className="rounded-[6px] border border-line p-4">
+                  <p className="font-display text-[1rem] font-bold">{s2.title}{s2.history?.rate != null ? <Badge tone="positive" className="ml-2">Geçmiş sonuç %{(s2.history.rate * 100).toFixed(1)}</Badge> : null}</p>
+                  <ul className="mt-2 list-disc space-y-1 pl-5 text-[0.82rem] text-muted">{s2.rationale.map((r) => <li key={r}>{r}</li>)}</ul>
+                  <p className="mt-2 text-[0.78rem] text-ink-700">{s2.guard}</p>
+                  {(() => { const ad = adOverride[s2.id] ?? s2.ad; return (<>
+                  <div className="mt-3 rounded-[4px] bg-canvas p-3 text-[0.82rem]">
+                    <p className="text-[0.7rem] font-semibold uppercase tracking-[0.12em] text-muted">Reklam metni taslağı{adOverride[s2.id] ? " · AI ile uyarlandı" : ""}</p>
+                    <p className="mt-1 font-semibold">{ad.title}</p>
+                    <p className="text-muted">{ad.body}</p>
+                    <p className="font-semibold text-accent">{ad.cta}</p>
+                  </div>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    <Button size="sm" onClick={() => { sessionStorage.setItem("dv:growth:campaign", JSON.stringify({ fields: s2.fields })); window.location.href = "/panel?s=campaigns"; }}>Kampanya formuna aktar</Button>
+                    <Button size="sm" variant="secondary" onClick={() => void post("/api/business", { action: "growth_save_ad", ...ad }, "Reklam metni taslak olarak kaydedildi (AI Pazarlama)")}>Reklam metnini taslak kaydet</Button>
+                    <Button size="sm" variant="ghost" icon={<Icon.spark size={14} />} loading={polishing === s2.id} onClick={() => void polish(s2.id, s2.ad)}>AI ile uyarla</Button>
+                  </div></>); })()}
+                </div>
+              ))}
+              {sug.suggestions.length === 0 ? <p className="text-[0.82rem] text-muted">Mevcut verilerle öneri çıkmadı; profil alanlarını tamamla.</p> : null}
+              <p className="text-[0.74rem] text-muted">Öneriler tahmindir; satış artışı garanti edilmez. Hiçbir kampanya ya da reklam onayın olmadan yayınlanmaz.</p>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+      {!open && g ? (
+        <p className="mt-3 text-[0.82rem] text-muted">
+          {g.monthlyRevenueCents != null ? `Aylık ciro ${money(g.monthlyRevenueCents, "TRY" as Currency, "tr" as Lang)} · ` : ""}
+          {g.platforms.length ? `${g.platforms.length} platform · ` : ""}{g.competitors.length ? `${g.competitors.length} rakip` : "rakip girilmedi"}
+        </p>
+      ) : null}
+    </Card>
+  );
+}
+
+function ContentCard({ c, post }: { c: BD["contents"][number]; post: (r: string, b: Record<string, unknown>, m: string) => Promise<unknown> }) {
+  const [editing, setEditing] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [ed, setEd] = useState({ title: c.title, body: c.body, cta: c.cta ?? "" });
+  const isAd = String(c.kind).toUpperCase() === "AD";
+  return (
+    <Card>
+      <div className="flex flex-wrap items-center gap-2">
+        <Badge tone="neutral">{c.kind}</Badge>{c.variant ? <Badge tone="accent">Varyant {c.variant}</Badge> : null}
+        <span className="text-[0.76rem] text-muted">{c.platform}</span>
+        <span className="ml-auto"><StatusBadge status={c.status} /></span>
+      </div>
+      {editing ? (
+        <div className="mt-3 grid gap-3">
+          <Field label="Başlık"><Input value={ed.title} maxLength={140} onChange={(e) => setEd({ ...ed, title: e.target.value })} /></Field>
+          <Field label="Metin"><Textarea rows={5} value={ed.body} maxLength={1500} onChange={(e) => setEd({ ...ed, body: e.target.value })} /></Field>
+          <Field label="CTA (isteğe bağlı)"><Input value={ed.cta} maxLength={80} onChange={(e) => setEd({ ...ed, cta: e.target.value })} /></Field>
+          <div className="flex flex-wrap gap-2">
+            <Button size="sm" loading={busy} onClick={async () => { setBusy(true); await post("/api/business", { action: "content_update", id: c.id, ...ed }, "Düzenleme kaydedildi"); setBusy(false); }}>Kaydet</Button>
+            <Button size="sm" variant="secondary" onClick={() => { setEd({ title: c.title, body: c.body, cta: c.cta ?? "" }); setEditing(false); }}>Vazgeç</Button>
+            <Button size="sm" variant="danger" className="ml-auto" icon={<Icon.trash size={14} />}
+              onClick={() => { if (window.confirm("Bu içerik (yayındaysa reklamı da) silinecek. Emin misin?")) void post("/api/business", { action: "content_delete", id: c.id }, "Silindi"); }}>Sil</Button>
+          </div>
+        </div>
+      ) : (
+        <>
+          <p className="mt-2.5 font-display text-[1.02rem] font-bold">{c.title}</p>
+          <pre className="mt-2 whitespace-pre-wrap font-sans text-[0.85rem] leading-relaxed text-muted">{c.body}</pre>
+          {c.cta ? <p className="mt-2 text-[0.82rem] font-semibold text-accent">CTA: {c.cta}</p> : null}
+          {isAd && c.status === "PUBLISHED" ? <p className="mt-2 text-[0.78rem] text-positive">Yayında: ana sayfada ve yönetici reklam listesinde görünür. Site içi reklam abonelik paketine dahildir, ek ücret yok.</p> : null}
+          <div className="mt-3.5 flex flex-wrap gap-2">
+            <Button size="sm" variant="secondary" icon={<Icon.check size={14} />} onClick={() => void post("/api/business", { action: "content_decision", id: c.id, decision: "approve" }, "Onaylandı")}>Onayla</Button>
+            <Button size="sm" icon={<Icon.share size={14} />} onClick={() => void post("/api/business", { action: "content_decision", id: c.id, decision: "publish" }, isAd ? "Yayınlandı — reklam ana sayfada" : "Yayınlandı")}>Onayla ve yayınla</Button>
+            <Button size="sm" variant="danger" onClick={() => void post("/api/business", { action: "content_decision", id: c.id, decision: "reject" }, "Reddedildi")}>Reddet</Button>
+            <Button size="sm" variant="ghost" icon={<Icon.copy size={14} />} onClick={() => navigator.clipboard?.writeText(c.body).catch(() => undefined)}>Metni kopyala</Button>
+            <Button size="sm" variant="ghost" icon={<Icon.edit size={14} />} onClick={() => setEditing(true)}>Düzenle</Button>
+          </div>
+        </>
+      )}
+    </Card>
   );
 }
 

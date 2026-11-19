@@ -588,9 +588,9 @@ export default function AdminDashboard({ data, lang, currency, section, affiliat
 
   if (section === "bonusRules") return <BonusRules data={data} lang={lang} act={act} />;
 
-  if (section === "ads") return <Wrap title="Reklam paketleri ve yayınlar" desc="Reklam yayını yönetici onayıyla başlar; gösterilmeyen reklam raporlanmaz.">
+  if (section === "ads") return <Wrap title="Reklam paketleri ve yayınlar" desc="Site içi reklam ve kampanyalar abonelik paketine dahildir (ek ücret yok). İşletmenin yayınladığı AI reklamları burada görünür; form talepleri onayını bekler. Gösterilmeyen reklam raporlanmaz.">
     <Table><thead><tr><Th>Reklam</Th><Th>İşletme</Th><Th>Yerleşim</Th><Th>Gösterim</Th><Th>Tıklama</Th><Th>CTR</Th><Th>Durum</Th><Th right>İşlem</Th></tr></thead>
-      <tbody>{data.ads.map((a) => (<tr key={a.id}><Td strong>{a.name}</Td><Td>{a.businessName}</Td><Td>{a.placement}</Td><Td right>{num(a.impressions, lang)}</Td><Td right>{num(a.clicks, lang)}</Td>
+      <tbody>{data.ads.map((a) => (<tr key={a.id}><Td strong>{a.name}{a.source === "AI_CONTENT" ? <Badge tone="accent" className="ml-2">AI · site içi</Badge> : null}{a.adBody ? <span className="mt-0.5 block max-w-[34ch] truncate text-[0.72rem] font-normal text-muted">{a.adBody}</span> : null}</Td><Td>{a.businessName}</Td><Td>{a.placement}</Td><Td right>{num(a.impressions, lang)}</Td><Td right>{num(a.clicks, lang)}</Td>
         <Td right>{pct(a.impressions ? a.clicks / a.impressions : 0, 2)}</Td><Td><StatusBadge status={a.status} lang={lang} /></Td>
         <Td right><span className="inline-flex gap-1.5">
           <Button size="sm" onClick={() => ask("Reklamı yayınla", `${a.name} yayına alınacak.`, () => act({ action: "ad_status", id: a.id, status: "ACTIVE" }, "Reklam aktif"))}>Yayınla</Button>
@@ -600,6 +600,7 @@ export default function AdminDashboard({ data, lang, currency, section, affiliat
   </Wrap>;
 
   if (section === "ai") return <Wrap title="AI pazarlama hizmetleri" desc="Sağlayıcı, model ve limitler. Anahtarlar tarayıcıya gönderilmez.">
+    <LlmProviders rows={data.llmProviders} act={act} />
     <div className="grid gap-4 lg:grid-cols-2">
       {data.aiSettings.map((s) => (
         <Card key={s.id}><p className="tabular text-[0.72rem] font-semibold uppercase tracking-[0.12em] text-muted">{s.key}</p>
@@ -831,6 +832,69 @@ function ConfirmDialog({ confirm, onClose }: { confirm: { title: string; desc: s
       <Button loading={busy} onClick={async () => { if (!confirm) return; setBusy(true); await confirm.run(); setBusy(false); onClose(); }}>Onayla ve uygula</Button></>}>
     <Notice tone="warning" icon={<Icon.alert size={16} />}>Bu işlem denetim kaydına yazılır ve geri alınması ek işlem gerektirebilir.</Notice>
   </Dialog>;
+}
+
+const LLM_LABEL: Record<string, string> = { gemini: "Gemini (Google)", claude: "Claude (Anthropic)", openai: "ChatGPT (OpenAI)", openrouter: "OpenRouter" };
+const LLM_MODEL_HINT: Record<string, string> = {
+  gemini: "Örn. gemini-2.5-flash", claude: "Örn. claude-sonnet-5-5", openai: "Örn. gpt-4o-mini", openrouter: "Örn. anthropic/claude-sonnet-4.5",
+};
+
+/** AI sağlayıcıları: API anahtarı (yalnızca yazılır, geri okunmaz) + model + aktif/pasif. Anahtar tarayıcıya gönderilmez. */
+function LlmProviders({ rows, act }: { rows: AdminData["llmProviders"]; act: (b: Record<string, unknown>, m: string) => Promise<void> }) {
+  const toast = useToast();
+  const ids = ["gemini", "claude", "openai", "openrouter"];
+  return (
+    <div className="mb-6">
+      <p className="mb-1 text-[0.72rem] font-semibold uppercase tracking-[0.14em] text-muted">Yapay zekâ sağlayıcıları</p>
+      <p className="mb-3 text-[0.82rem] leading-relaxed text-muted">
+        Anahtar girip Kaydet’e bas; istediğin sağlayıcıyı aktif/pasif yapabilirsin. Anahtarlar şifrelenerek saklanır, bir daha gösterilmez (yalnızca son 4 hane). Birden fazla sağlayıcı aktif olabilir; işletmelere AI metin uyarlamasında sırayla Claude, Gemini, ChatGPT, OpenRouter denenir. Sunucuda <code className="rounded bg-canvas px-1">LLM_KEY_SECRET</code> ortam değişkeni (en az 16 karakter) tanımlı olmalıdır.
+      </p>
+      <div className="grid gap-4 lg:grid-cols-2">
+        {ids.map((id) => {
+          const r = rows.find((x) => x.provider === id);
+          return <LlmCard key={id} id={id} row={r} act={act} toast={toast} />;
+        })}
+      </div>
+    </div>
+  );
+}
+
+function LlmCard({ id, row, act, toast }: { id: string; row?: AdminData["llmProviders"][number]; act: (b: Record<string, unknown>, m: string) => Promise<void>; toast: ReturnType<typeof useToast> }) {
+  const [key, setKey] = useState("");
+  const [model, setModel] = useState(row?.model ?? "");
+  const [enabled, setEnabled] = useState(row?.enabled ?? false);
+  const [busy, setBusy] = useState<"save" | "test" | null>(null);
+  return (
+    <Card>
+      <div className="flex items-center justify-between gap-3">
+        <p className="font-display text-[1rem] font-bold">{LLM_LABEL[id]}</p>
+        <div className="flex items-center gap-2">
+          <Badge tone={enabled && row?.hasKey ? "positive" : "neutral"}>{enabled && row?.hasKey ? "Aktif" : "Pasif"}</Badge>
+          <Toggle checked={enabled} onChange={setEnabled} label={`${LLM_LABEL[id]} aktif`} />
+        </div>
+      </div>
+      <div className="mt-3 grid gap-3">
+        <Field label="API anahtarı" hint={row?.hasKey ? `Kayıtlı: •••• ${row.last4 ?? ""} — değiştirmek için yeni anahtarı yaz, boş bırakırsan korunur.` : "Henüz anahtar kaydedilmedi."}>
+          <Input type="password" autoComplete="off" value={key} onChange={(e) => setKey(e.target.value)} placeholder={row?.hasKey ? "••••••••••••" : "API anahtarını yapıştır"} />
+        </Field>
+        <Field label="Model"><Input value={model} onChange={(e) => setModel(e.target.value)} placeholder={LLM_MODEL_HINT[id]} /></Field>
+      </div>
+      <div className="mt-4 flex flex-wrap gap-2">
+        <Button size="sm" loading={busy === "save"} onClick={async () => {
+          setBusy("save");
+          await act({ action: "llm_save", provider: id, apiKey: key || undefined, model, enabled }, "Sağlayıcı kaydedildi");
+          setBusy(null);
+        }}>Kaydet</Button>
+        <Button size="sm" variant="secondary" disabled={!row?.hasKey} loading={busy === "test"} onClick={async () => {
+          setBusy("test");
+          const res = await fetch("/api/admin", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: "llm_test", provider: id }) });
+          const j = await res.json().catch(() => ({ ok: false }));
+          toast.push(j.ok ? { title: "Bağlantı başarılı", desc: `Yanıt: ${j.reply}`, tone: "positive" } : { title: j.error ?? "Bağlantı başarısız", tone: "danger" });
+          setBusy(null);
+        }}>Bağlantıyı dene</Button>
+      </div>
+    </Card>
+  );
 }
 
 function BonusRules({ data, lang, act }: { data: AdminData; lang: Lang; act: (b: Record<string, unknown>, m: string) => Promise<void> }) {

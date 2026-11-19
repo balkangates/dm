@@ -5,7 +5,7 @@ import { Icon } from "@/components/icons";
 import { CampaignCardView, SponsoredStrip } from "@/components/discovery";
 import { OfferCardView } from "@/components/offers";
 import HowItWorks from "@/components/HowItWorks";
-import type { listBusinesses, listCampaignCards, listCategories, listDistricts, listOffers, listVideos } from "@/lib/queries";
+import type { listBusinesses, listCampaignCards, listCategories, listDistricts, listOffers, listVideos, listActiveAds } from "@/lib/queries";
 import type { Lang } from "@/lib/money";
 import type { ViewMode } from "@/lib/viewMode";
 
@@ -22,6 +22,7 @@ type Categories = Awaited<ReturnType<typeof listCategories>>;
 type Districts = Awaited<ReturnType<typeof listDistricts>>;
 type Offers = Awaited<ReturnType<typeof listOffers>>;
 type Videos = Awaited<ReturnType<typeof listVideos>>;
+type Ads = Awaited<ReturnType<typeof listActiveAds>>;
 export type Brand = { merchant: string; category: string; slug: string; count: number; image: string | null };
 
 /* ------------------------------ ticker -------------------------------- */
@@ -69,8 +70,9 @@ export function FinancialBoundary({ mode }: { mode: ViewMode }) {
 /* ----------------------------- MÜŞTERİ MODU --------------------------- */
 
 export function CustomerHome({
-  lang, campaigns, businesses, categories, districts, offers, brands, videos, fallbackCover, howVideoFile,
+  lang, campaigns, businesses, categories, districts, offers, brands, videos, fallbackCover, howVideoFile, ads = [],
 }: {
+  ads?: Ads;
   lang: Lang;
   campaigns: Campaigns;
   businesses: Businesses;
@@ -125,6 +127,29 @@ export function CustomerHome({
           ))}
         </div>
       </section>
+
+      {/* ------------------------- SİTE İÇİ REKLAMLAR ------------------------ */}
+      {ads.length ? (
+        <section className="mx-auto mt-16 max-w-[1280px] px-4 sm:px-6">
+          <SectionHead eyebrow="Reklam" title="İşletmelerden duyurular" desc="İşletmelerin yayınladığı site içi reklamlar; sponsorlu içerik olarak işaretlenir." />
+          <div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-3">
+            {ads.map((a, i) => (
+              <Reveal key={a.id} delay={i * 50}>
+                <Link href={`/isletme/${a.slug}`} className="card block h-full p-5 transition-shadow hover:shadow-md">
+                  <div className="flex items-center justify-between gap-2">
+                    <Badge tone="warning">Reklam</Badge>
+                    <span className="text-[0.74rem] text-muted">{a.district}{a.city ? `, ${a.city}` : ""}</span>
+                  </div>
+                  <p className="mt-3 font-display text-[1.08rem] font-bold leading-snug">{a.title}</p>
+                  {a.body ? <p className="mt-2 line-clamp-4 whitespace-pre-line text-[0.86rem] leading-relaxed text-muted">{a.body}</p> : null}
+                  <p className="mt-3 text-[0.8rem] font-semibold text-ink-700">{a.businessName}</p>
+                  {a.cta ? <p className="mt-1 text-[0.82rem] font-semibold text-accent">{a.cta} →</p> : null}
+                </Link>
+              </Reveal>
+            ))}
+          </div>
+        </section>
+      ) : null}
 
       {/* ------------------- YEREL İŞLETMELER (konuma göre + sipariş) ------------------- */}
       <NearbyBusinesses

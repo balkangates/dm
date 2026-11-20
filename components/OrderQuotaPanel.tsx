@@ -80,7 +80,7 @@ export default function OrderQuotaPanel({
                 e.preventDefault();
                 if (!valid) return;
                 setBusy(true);
-                await post("/api/business", { action: "order_topup", qty }, `${num(qty, lang)} sipariş bakiyesi eklendi`);
+                await post("/api/business", { action: "order_topup", qty }, `${num(qty, lang)} sipariş bakiyesi eklendi — ${money(amount, currency, lang)} ödeme bildirimi gönderildi`);
                 setBusy(false);
               }}
             >

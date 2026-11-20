@@ -8,7 +8,7 @@ import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:
 
 export type LlmProvider = "gemini" | "claude" | "openai" | "openrouter";
 export const LLM_PROVIDERS: Array<{ id: LlmProvider; label: string; defaultModel: string }> = [
-  { id: "gemini", label: "Gemini (Google)", defaultModel: "gemini-2.5-flash" },
+  { id: "gemini", label: "Gemini (Google)", defaultModel: "gemini-3.8-flash" },
   { id: "claude", label: "Claude (Anthropic)", defaultModel: "claude-sonnet-5-5" },
   { id: "openai", label: "ChatGPT (OpenAI)", defaultModel: "gpt-4o-mini" },
   { id: "openrouter", label: "OpenRouter", defaultModel: "anthropic/claude-sonnet-4.5" },

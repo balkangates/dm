@@ -10,7 +10,7 @@
 import { geocodeAddress } from "@/lib/geocode";
 import { decryptKey, encryptKey, generate, isProvider, llmSecretConfigured, LLM_PROVIDERS } from "@/lib/llm";
 import { validCoord, haversineKm } from "@/lib/geodist";
-import { buildSuggestions, type GrowthProfileIn, type SuggestionHistory } from "@/lib/growth-engine";
+import { buildSuggestions, computeResilience, sanitizeCompetitors, type GrowthProfileIn, type SuggestionHistory } from "@/lib/growth-engine";
 import { createClient } from "@/lib/supabase/server";
 import { trackEvent, logAudit } from "@/lib/queries";
 import { slugify } from "@/lib/money";
@@ -971,10 +971,20 @@ export async function businessAction(actor: BusinessActorLite, body: Row) {
     const marginRaw = body.marginPct;
     const margin = marginRaw === null || marginRaw === undefined || String(marginRaw).trim() === "" ? null : Number(String(marginRaw).replace(",", "."));
     if (margin !== null && (!Number.isFinite(margin) || margin < 0 || margin > 100)) throw new ActionError(422, "Kâr marjı 0-100 arasında olmalı.");
-    const competitors = (Array.isArray(body.competitors) ? body.competitors : [])
-      .slice(0, 8)
-      .map((c) => ({ name: String((c as Row)?.name ?? "").trim().slice(0, 80), note: String((c as Row)?.note ?? "").trim().slice(0, 200) }))
-      .filter((c) => c.name);
+    // Rakipler: konum adresten otomatik çözülür (yalnızca yeni/değişen adresler; Nominatim hız sınırı için en çok 4).
+    const { data: prevGp } = await client.from("business_growth_profiles").select("competitors").eq("business_id", actor.businessId).maybeSingle();
+    const prevComps = sanitizeCompetitors(prevGp?.competitors);
+    const competitors = sanitizeCompetitors(body.competitors);
+    let geocoded = 0;
+    for (const c of competitors) {
+      const prev = prevComps.find((x) => x.name.toLowerCase() === c.name.toLowerCase());
+      if (!c.address) { c.lat = null; c.lng = null; continue; }
+      if (prev && prev.address === c.address && prev.lat != null) { c.lat = prev.lat; c.lng = prev.lng; continue; }
+      if (geocoded >= 4) { c.lat = null; c.lng = null; continue; }
+      geocoded += 1;
+      const g = await geocodeAddress(c.address, { country: null });
+      c.lat = g?.lat ?? null; c.lng = g?.lng ?? null;
+    }
     const ALLOWED = ["TRENDYOL_GO", "YEMEKSEPETI", "GETIR", "MIGROS_YEMEK", "KENDI_KURYESI", "DIGER"];
     const platforms = (Array.isArray(body.platforms) ? body.platforms : []).map(String).filter((p) => ALLOWED.includes(p));
     const row = {
@@ -1026,7 +1036,7 @@ export async function businessAction(actor: BusinessActorLite, body: Row) {
       avgBasketCents: gp.avg_basket_cents == null ? null : Number(gp.avg_basket_cents),
       marginPct: gp.margin_pct == null ? null : Number(gp.margin_pct),
       busyHours: nulStr(gp.busy_hours), quietHours: nulStr(gp.quiet_hours),
-      competitors: ((gp.competitors ?? []) as Array<{ name?: string; note?: string }>).map((c) => ({ name: String(c.name ?? ""), note: String(c.note ?? "") })),
+      competitors: sanitizeCompetitors(gp.competitors),
       platforms: ((gp.platforms ?? []) as string[]).map(String),
       platformDiscountNote: nulStr(gp.platform_discount_note), goal: nulStr(gp.goal),
     } : null;
@@ -1049,7 +1059,15 @@ export async function businessAction(actor: BusinessActorLite, body: Row) {
         maxDiscountPercent: discounts.length ? Math.max(...discounts) : null,
       },
     });
-    return Response.json({ ok: true, ...result });
+    const marketIn = {
+      hasLocation, radiusKm, nearbyBusinesses: nearby, activeCampaigns: active, withTimeWindow: withWindow,
+      avgDiscountPercent: discounts.length ? discounts.reduce((a, b) => a + b, 0) / discounts.length : null,
+      maxDiscountPercent: discounts.length ? Math.max(...discounts) : null,
+    };
+    const resilience = profile ? computeResilience({ profile, business: { lat: hasLocation ? Number(biz.lat) : null, lng: hasLocation ? Number(biz.lng) : null }, market: marketIn }) : null;
+    const unlocated = profile ? profile.competitors.filter((c) => c.address && c.lat == null).map((c) => c.name) : [];
+    if (unlocated.length) result.warnings.push(`Şu rakiplerin konumu çözülemedi: ${unlocated.join(", ")}. Adresi mahalle, sokak ve ilçe ile tam yaz; aynı kayıtta en çok 4 yeni adres çözülür.`);
+    return Response.json({ ok: true, ...result, resilience });
   }
 
   if (action === "growth_polish_ad") {
@@ -1070,7 +1088,7 @@ export async function businessAction(actor: BusinessActorLite, body: Row) {
       `Taslak başlık: ${title}`, `Taslak metin: ${text}`, `Taslak CTA: ${str(body.cta)}`,
     ].join("\n");
     try {
-      const raw = await generate(cfg.provider, decryptKey(str(cfg.api_key_enc)), str(cfg.model), prompt, 500);
+      const raw = await generate(cfg.provider, decryptKey(str(cfg.api_key_enc)), str(cfg.model), prompt, 1200);
       const m = /\{[\s\S]*\}/.exec(raw);
       const j = m ? (JSON.parse(m[0]) as Row) : null;
       const t2 = String(j?.title ?? "").trim().slice(0, 140), b2 = String(j?.body ?? "").trim().slice(0, 600);
@@ -1569,7 +1587,7 @@ export async function adminAction(user: SessionUserLite, body: Row) {
       if (!cur?.api_key_enc) throw new ActionError(422, "Önce API anahtarını kaydet.");
       try {
         const key = decryptKey(String(cur.api_key_enc));
-        const out = await generate(provider, key, String(cur.model || LLM_PROVIDERS.find((p) => p.id === provider)?.defaultModel), "Yalnızca 'tamam' yaz.", 64);
+        const out = await generate(provider, key, String(cur.model || LLM_PROVIDERS.find((p) => p.id === provider)?.defaultModel), "Yalnızca 'tamam' yaz.", 256);
         return Response.json({ ok: true, reply: out.slice(0, 60) });
       } catch (e) {
         throw new ActionError(502, `Bağlantı başarısız: ${e instanceof Error ? e.message : "bilinmeyen hata"}`);

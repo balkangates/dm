@@ -11,6 +11,7 @@
  *  * Olay/bildirim eklemeleri append-only RLS ile sınırlıdır; hatalar yutulur
  *    (sayfa render'ını engellemez).
  */
+import { sanitizeCompetitors } from "@/lib/growth-engine";
 import { cache } from "react";
 import { createClient } from "@/lib/supabase/server";
 import type { BusinessRow, FeeRuleRow, OfferMenu, PackageRow } from "./types";
@@ -833,7 +834,7 @@ export async function getBusinessData(businessId: string, days = 14) {
           marginPct: gpRow.margin_pct == null ? null : Number(gpRow.margin_pct),
           busyHours: nul(gpRow.busy_hours),
           quietHours: nul(gpRow.quiet_hours),
-          competitors: ((gpRow.competitors ?? []) as Array<{ name?: string; note?: string }>).map((c) => ({ name: String(c.name ?? ""), note: String(c.note ?? "") })),
+          competitors: sanitizeCompetitors(gpRow.competitors),
           platforms: ((gpRow.platforms ?? []) as string[]).map(String),
           platformDiscountNote: nul(gpRow.platform_discount_note),
           goal: nul(gpRow.goal),
@@ -1727,4 +1728,29 @@ export async function listActiveAds(limit = 6) {
         coverImage: nul(b.cover_image),
       };
     });
+}
+
+/** İşletme kuracaklar için bölge özeti: kategori + ilçedeki işletme sayısı ve yayındaki kampanya indirimi. */
+export async function areaSnapshot(category: string, district: string) {
+  const client = await sb();
+  let q = client.from("businesses").select("id", { count: "exact" }).is("suspended_at", null).eq("category", category);
+  if (district) q = q.eq("district", district);
+  const { data, count } = await q.limit(300);
+  const ids = ((data ?? []) as Row[]).map((b) => str(b.id));
+  let activeCampaigns = 0;
+  const discounts: number[] = [];
+  if (ids.length) {
+    const { data: camps } = await client.from("campaigns").select("discount_percent, time_start").in("business_id", ids).eq("status", "PUBLISHED").eq("moderation_status", "APPROVED");
+    for (const c of (camps ?? []) as Row[]) {
+      activeCampaigns += 1;
+      if (Number(c.discount_percent) > 0) discounts.push(Number(c.discount_percent));
+    }
+  }
+  const businesses = count ?? ids.length;
+  return {
+    category, district, businesses, activeCampaigns,
+    avgDiscount: discounts.length ? Math.round((discounts.reduce((a, b) => a + b, 0) / discounts.length) * 10) / 10 : null,
+    maxDiscount: discounts.length ? Math.max(...discounts) : null,
+    level: businesses < 3 ? "Düşük" : businesses <= 8 ? "Orta" : "Yüksek",
+  };
 }

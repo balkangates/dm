@@ -155,7 +155,7 @@ export async function findClosestProduct(
     try {
       const g = await askGemini(clean, names, {
         apiKey: opts.apiKey,
-        model: opts.model || "gemini-2.5-flash",
+        model: opts.model || "gemini-3.8-flash",
         fetchImpl: opts.fetchImpl ?? fetch,
         timeoutMs: opts.timeoutMs ?? 6000,
       });

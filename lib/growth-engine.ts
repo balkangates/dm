@@ -12,7 +12,7 @@ export type GrowthProfileIn = {
   marginPct: number | null;
   busyHours: string | null;
   quietHours: string | null;
-  competitors: Array<{ name: string; note: string }>;
+  competitors: Competitor[];
   platforms: string[];
   platformDiscountNote: string | null;
   goal: string | null;
@@ -215,4 +215,162 @@ export function buildSuggestions(input: {
   }
   out.sort((a, b) => (b.history?.rate ?? -1) - (a.history?.rate ?? -1));
   return { suggestions: out.slice(0, 4), warnings, market: mkt };
+}
+
+/* ===================== RAKİP VERİSİ + REKABET DAYANMA GÜCÜ ===================== */
+
+export type Crowd = "LOW" | "MEDIUM" | "HIGH";
+export type Competitor = {
+  name: string;
+  note: string;
+  address: string;
+  lat: number | null;
+  lng: number | null;
+  /** Google Haritalar "şu anki yoğunluk" — işletme elle girer (Google bunu herkese açık API ile vermez). */
+  crowd: Crowd | null;
+  /** Rakibin online (platform) indirim oranı, %. */
+  onlineDiscountPct: number | null;
+  /** Rakibin online kampanya içerikleri (metin). */
+  campaigns: string;
+  /** Aynı ürün karşılaştırması: rakibin online fiyatı ve senin fiyatın (TL). */
+  items: Array<{ product: string; theirPrice: number | null; myPrice: number | null }>;
+};
+
+const num = (v: unknown): number | null => {
+  if (v === null || v === undefined || String(v).trim() === "") return null;
+  const x = Number(String(v).replace(",", "."));
+  return Number.isFinite(x) ? x : null;
+};
+
+/** İstemciden/DB'den gelen ham rakip listesini güvenli biçime çevirir (en çok 8 rakip, 6 ürün). */
+export function sanitizeCompetitors(raw: unknown): Competitor[] {
+  return (Array.isArray(raw) ? raw : []).slice(0, 8).map((r) => {
+    const c = (r ?? {}) as Record<string, unknown>;
+    const lat = num(c.lat), lng = num(c.lng);
+    const disc = num(c.onlineDiscountPct);
+    const crowd = c.crowd === "LOW" || c.crowd === "MEDIUM" || c.crowd === "HIGH" ? (c.crowd as Crowd) : null;
+    return {
+      name: String(c.name ?? "").trim().slice(0, 80),
+      note: String(c.note ?? "").trim().slice(0, 200),
+      address: String(c.address ?? "").trim().slice(0, 200),
+      lat: lat !== null && lng !== null && Math.abs(lat) <= 90 && Math.abs(lng) <= 180 && !(lat === 0 && lng === 0) ? lat : null,
+      lng: lat !== null && lng !== null && Math.abs(lat) <= 90 && Math.abs(lng) <= 180 && !(lat === 0 && lng === 0) ? lng : null,
+      crowd,
+      onlineDiscountPct: disc !== null && disc >= 0 && disc <= 90 ? Math.round(disc * 10) / 10 : null,
+      campaigns: String(c.campaigns ?? "").trim().slice(0, 400),
+      items: (Array.isArray(c.items) ? c.items : []).slice(0, 6).map((it) => {
+        const i = (it ?? {}) as Record<string, unknown>;
+        const tp = num(i.theirPrice), mp = num(i.myPrice);
+        return {
+          product: String(i.product ?? "").trim().slice(0, 80),
+          theirPrice: tp !== null && tp > 0 && tp < 1_000_000 ? tp : null,
+          myPrice: mp !== null && mp > 0 && mp < 1_000_000 ? mp : null,
+        };
+      }).filter((i) => i.product),
+    };
+  }).filter((c) => c.name);
+}
+
+export type ResilienceFactor = { key: string; label: string; weight: number; score: number | null; note: string };
+export type Resilience = {
+  score: number;
+  level: "Güçlü" | "Orta" | "Zayıf";
+  /** Skorun dayandığı verinin oranı (0-100). Düşükse sonuç kesin değildir. */
+  confidence: number;
+  factors: ResilienceFactor[];
+  stress: string | null;
+  insights: string[];
+};
+
+const lerp = (x: number, x0: number, x1: number, y0: number, y1: number) => {
+  const t = Math.max(0, Math.min(1, (x - x0) / (x1 - x0)));
+  return y0 + (y1 - y0) * t;
+};
+
+/**
+ * Rekabet dayanma gücü (0-100): işletmenin rakip baskısı altında (fiyat, indirim, yoğunluk, kampanya) ayakta kalma kapasitesi.
+ * Yedi etken ağırlıklı toplanır; verisi olmayan etken dışarıda bırakılır ve "veri güveni" düşer.
+ */
+export function computeResilience(input: {
+  profile: GrowthProfileIn & { competitors: Competitor[] };
+  business: { lat: number | null; lng: number | null };
+  market: MarketIn;
+}): Resilience {
+  const { profile: p, business: b, market } = input;
+  const comps = p.competitors;
+  const insights: string[] = [];
+  const distKm = (c: Competitor): number | null =>
+    b.lat != null && b.lng != null && c.lat != null && c.lng != null ? haversine(b.lat, b.lng, c.lat, c.lng) : null;
+
+  // 1) Fiyat konumu
+  const ratios: number[] = [];
+  for (const c of comps) for (const it of c.items) if (it.theirPrice && it.myPrice) {
+    const r = it.myPrice / it.theirPrice;
+    ratios.push(r);
+    const diff = Math.round((r - 1) * 100);
+    insights.push(`${it.product}: ${c.name} ${it.theirPrice} TL, sen ${it.myPrice} TL (${diff >= 0 ? "+" : ""}%${diff}).`);
+  }
+  const avgRatio = ratios.length ? ratios.reduce((a, x) => a + x, 0) / ratios.length : null;
+  const priceScore = avgRatio == null ? null : avgRatio <= 0.95 ? 100 : avgRatio <= 1 ? lerp(avgRatio, 0.95, 1, 100, 80) : lerp(avgRatio, 1, 1.25, 80, 10);
+
+  // 2) İndirim payı: marjın izin verdiği indirim − rakibin en yüksek online indirimi
+  const { cap } = discountCap(p.marginPct);
+  const compMax = Math.max(0, ...comps.map((c) => c.onlineDiscountPct ?? 0), market.maxDiscountPercent ?? 0);
+  const headroom = cap - compMax;
+  const discScore = p.marginPct == null || (compMax === 0 && !comps.length) ? null : headroom >= 5 ? 100 : headroom >= 0 ? lerp(headroom, 0, 5, 70, 100) : lerp(headroom, -15, 0, 10, 70);
+
+  // 3) Marj tamponu
+  const marginScore = p.marginPct == null ? null : p.marginPct >= 35 ? 100 : p.marginPct >= 25 ? lerp(p.marginPct, 25, 35, 80, 100) : p.marginPct >= 15 ? lerp(p.marginPct, 15, 25, 50, 80) : lerp(p.marginPct, 8, 15, 10, 50);
+
+  // 4) Yakınlık / yoğunluk (1 km içindeki rakipler + çevredeki DampingVar işletmeleri)
+  const located = comps.filter((c) => distKm(c) != null);
+  const within1 = located.filter((c) => (distKm(c) as number) <= 1).length;
+  for (const c of located.sort((a, z) => (distKm(a) as number) - (distKm(z) as number)).slice(0, 3)) {
+    const d = distKm(c) as number;
+    insights.push(`${c.name} yaklaşık ${d < 1 ? `${Math.round(d * 1000)} m` : `${d.toFixed(1)} km`} uzaklıkta.`);
+  }
+  const densityN = located.length ? within1 : market.hasLocation ? Math.min(market.nearbyBusinesses, 6) : 0;
+  const densityKnown = located.length > 0 || market.hasLocation;
+  const densityScore = !densityKnown ? null : densityN <= 0 ? 100 : densityN === 1 ? 80 : densityN === 2 ? 60 : densityN <= 4 ? 40 : 20;
+
+  // 5) Talep sinyali (rakiplerin Google Haritalar canlı yoğunluğu)
+  const crowds = comps.map((c) => c.crowd).filter((x): x is Crowd => !!x);
+  for (const c of comps) if (c.crowd === "HIGH") insights.push(`${c.name} şu an yoğun: taşan müşteriyi yakalama fırsatı.`);
+  const crowdScore = crowds.length ? crowds.reduce((a, x) => a + (x === "HIGH" ? 80 : x === "MEDIUM" ? 65 : 40), 0) / crowds.length : null;
+
+  // 6) Kampanya farklılaşması
+  const withCamp = comps.filter((c) => c.campaigns.trim()).length;
+  const ownCamp = Boolean(p.platformDiscountNote);
+  const campScore = !comps.length ? null : withCamp === 0 ? 80 : ownCamp ? 65 : 45;
+  for (const c of comps) if (c.campaigns.trim()) insights.push(`${c.name} online kampanyası: “${c.campaigns.slice(0, 90)}”.`);
+
+  // 7) Platform bağımlılığı (komisyonlu kanal yükü)
+  const plat = p.platforms.filter((k) => k !== "KENDI_KURYESI").length;
+  const platScore = Math.max(0, (plat === 0 ? 90 : plat === 1 ? 70 : 50) - (plat > 0 && p.marginPct != null && p.marginPct < 20 ? 20 : 0));
+
+  const factors: ResilienceFactor[] = [
+    { key: "price", label: "Fiyat konumu", weight: 20, score: priceScore, note: avgRatio == null ? "Aynı ürün için rakip ve kendi fiyatını gir." : `Aynı ürünlerde fiyatın rakiplere göre ortalama ${avgRatio >= 1 ? "+" : ""}%${Math.round((avgRatio - 1) * 100)}.` },
+    { key: "discount", label: "İndirim payı", weight: 20, score: discScore, note: discScore == null ? "Kâr marjı ve rakip indirim oranı gerekli." : `Marjın izin verdiği en yüksek indirim %${cap}, rakibin en yüksek online indirimi %${compMax} (fark ${headroom >= 0 ? "+" : ""}${headroom} puan).` },
+    { key: "margin", label: "Marj tamponu", weight: 15, score: marginScore, note: p.marginPct == null ? "Kâr marjı girilmedi." : `Kâr marjın %${p.marginPct}.` },
+    { key: "density", label: "Yakınlık ve yoğunluk", weight: 15, score: densityScore, note: !densityKnown ? "Konumun ve rakip konumları gerekli." : `1 km içinde ${within1} girilen rakip; çevrede ${market.hasLocation ? market.nearbyBusinesses : 0} DampingVar işletmesi.` },
+    { key: "crowd", label: "Talep sinyali (canlı yoğunluk)", weight: 10, score: crowdScore, note: crowds.length ? `${crowds.length} rakipte yoğunluk girildi.` : "Rakiplerin Google Haritalar yoğunluğunu gir." },
+    { key: "campaign", label: "Kampanya farklılaşması", weight: 10, score: campScore, note: !comps.length ? "Rakip eklenmedi." : `${withCamp}/${comps.length} rakip online kampanya yürütüyor.` },
+    { key: "platform", label: "Platform bağımlılığı", weight: 10, score: platScore, note: plat ? `${plat} yemek platformunda satış var; komisyon yükü marjı baskılar.` : "Aracı platform bağımlılığı yok." },
+  ];
+  const have = factors.filter((f) => f.score != null);
+  const wSum = have.reduce((a, f) => a + f.weight, 0);
+  const score = wSum ? Math.round(have.reduce((a, f) => a + (f.score as number) * f.weight, 0) / wSum) : 0;
+  for (const f of factors) if (f.score != null) f.score = Math.round(f.score);
+
+  const stress = p.marginPct != null && compMax > 0
+    ? (() => { const after = Math.round((p.marginPct - compMax) * 10) / 10; return `Stres testi: rakibin en yüksek online indirimini (%${compMax}) aynen karşılarsan kâr marjın %${p.marginPct}’den %${after}’e düşer${after < 10 ? " — bu sürdürülebilir değil; indirim yerine hediye ürün ya da sepet şartı kullan." : "."}`; })()
+    : null;
+
+  return { score, level: score >= 70 ? "Güçlü" : score >= 45 ? "Orta" : "Zayıf", confidence: Math.round((wSum / 100) * 100), factors, stress, insights: insights.slice(0, 10) };
+}
+
+function haversine(lat1: number, lng1: number, lat2: number, lng2: number): number {
+  const R = 6371, rad = (d: number) => (d * Math.PI) / 180;
+  const a = Math.sin(rad(lat2 - lat1) / 2) ** 2 + Math.cos(rad(lat1)) * Math.cos(rad(lat2)) * Math.sin(rad(lng2 - lng1) / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(a));
 }

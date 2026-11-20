@@ -2048,9 +2048,16 @@ function GrowthProfileCard({ d, post }: { d: BD; post: (r: string, b: Record<str
     goal: g?.goal ?? "",
   });
   const [platforms, setPlatforms] = useState<string[]>(g?.platforms ?? []);
-  const [comps, setComps] = useState<Array<{ name: string; note: string }>>(g?.competitors?.length ? g.competitors : [{ name: "", note: "" }]);
+  type CompForm = { name: string; note: string; address: string; crowd: string; onlineDiscountPct: string; campaigns: string; hasLoc: boolean; items: Array<{ product: string; theirPrice: string; myPrice: string }> };
+  const blankComp = (): CompForm => ({ name: "", note: "", address: "", crowd: "", onlineDiscountPct: "", campaigns: "", hasLoc: false, items: [] });
+  const [comps, setComps] = useState<CompForm[]>(g?.competitors?.length ? g.competitors.map((c) => ({
+    name: c.name, note: c.note, address: c.address, crowd: c.crowd ?? "", onlineDiscountPct: c.onlineDiscountPct == null ? "" : String(c.onlineDiscountPct),
+    campaigns: c.campaigns, hasLoc: c.lat != null,
+    items: c.items.map((it) => ({ product: it.product, theirPrice: it.theirPrice == null ? "" : String(it.theirPrice), myPrice: it.myPrice == null ? "" : String(it.myPrice) })),
+  })) : [blankComp()]);
   type GSug = { id: string; title: string; rationale: string[]; guard: string; fields: Record<string, unknown>; ad: { title: string; body: string; cta: string }; history?: { campaigns: number; rate: number | null } };
-  const [sug, setSug] = useState<{ suggestions: GSug[]; warnings: string[]; market: string } | null>(null);
+  type GRes = { score: number; level: string; confidence: number; factors: Array<{ key: string; label: string; weight: number; score: number | null; note: string }>; stress: string | null; insights: string[] };
+  const [sug, setSug] = useState<{ suggestions: GSug[]; warnings: string[]; market: string; resilience: GRes | null } | null>(null);
   const [sBusy, setSBusy] = useState(false);
   const [adOverride, setAdOverride] = useState<Record<string, { title: string; body: string; cta: string }>>({});
   const [polishing, setPolishing] = useState<string | null>(null);
@@ -2094,16 +2101,56 @@ function GrowthProfileCard({ d, post }: { d: BD; post: (r: string, b: Record<str
           </div>
           <Field label="Platformlarda verdiğin indirim / kampanyalar" className="sm:col-span-2" hint="Örn. “Trendyol Go’da hafta sonu %15, 300 TL üzeri ücretsiz teslimat”. Metni olduğu gibi yaz."><Textarea rows={2} value={f.platformDiscountNote} maxLength={300} onChange={(e) => setF({ ...f, platformDiscountNote: e.target.value })} /></Field>
           <div className="sm:col-span-2">
-            <p className="mb-2 text-[0.78rem] font-semibold">Rakip işletmeler <span className="font-normal text-muted">(en fazla 8)</span></p>
-            <div className="space-y-2">
-              {comps.map((c, i) => (
-                <div key={i} className="grid gap-2 sm:grid-cols-[1fr_2fr_auto]">
-                  <Input value={c.name} maxLength={80} placeholder="Rakip adı" onChange={(e) => setComps(comps.map((x, j) => (j === i ? { ...x, name: e.target.value } : x)))} />
-                  <Input value={c.note} maxLength={200} placeholder="Kampanyası / fiyat seviyesi / notun" onChange={(e) => setComps(comps.map((x, j) => (j === i ? { ...x, note: e.target.value } : x)))} />
-                  <Button type="button" size="sm" variant="ghost" onClick={() => setComps(comps.length > 1 ? comps.filter((_, j) => j !== i) : [{ name: "", note: "" }])}>Kaldır</Button>
-                </div>
-              ))}
-              {comps.length < 8 ? <Button type="button" size="sm" variant="secondary" onClick={() => setComps([...comps, { name: "", note: "" }])}>Rakip ekle</Button> : null}
+            <p className="mb-1 text-[0.78rem] font-semibold">Rakip işletmeler <span className="font-normal text-muted">(en fazla 8)</span></p>
+            <p className="mb-2 text-[0.76rem] text-muted">Rakibin adresini yazarsan konumu kaydedince otomatik bulunur. Canlı yoğunluğu Google Haritalar’da rakibin sayfasındaki “Şu an ne kadar yoğun” bilgisine bakarak sen seçersin (Google bu veriyi herkese açık vermez). Fiyat, indirim ve kampanyaları rakibin online (platform) sayfasından elle gir.</p>
+            <div className="space-y-3">
+              {comps.map((c, i) => {
+                const up = (patch: Partial<CompForm>) => setComps(comps.map((x, j) => (j === i ? { ...x, ...patch } : x)));
+                return (
+                  <div key={i} className="rounded-[6px] border border-line p-3">
+                    <div className="grid gap-2 sm:grid-cols-[1fr_2fr]">
+                      <Input value={c.name} maxLength={80} placeholder="Rakip adı" onChange={(e) => up({ name: e.target.value })} />
+                      <Input value={c.address} maxLength={200} placeholder="Rakip adresi (mahalle, sokak, ilçe) — konum otomatik bulunur" onChange={(e) => up({ address: e.target.value })} />
+                    </div>
+                    <div className="mt-2 grid gap-2 sm:grid-cols-3">
+                      <label className="text-[0.74rem] font-semibold">Google Haritalar canlı yoğunluk
+                        <Select className="mt-1" value={c.crowd} onChange={(e) => up({ crowd: e.target.value })}>
+                          <option value="">Bilinmiyor</option><option value="LOW">Sakin</option><option value="MEDIUM">Orta</option><option value="HIGH">Yoğun</option>
+                        </Select>
+                      </label>
+                      <label className="text-[0.74rem] font-semibold">Online indirim oranı (%)
+                        <Input className="mt-1" inputMode="decimal" value={c.onlineDiscountPct} placeholder="Örn. 15" onChange={(e) => up({ onlineDiscountPct: e.target.value })} />
+                      </label>
+                      <label className="text-[0.74rem] font-semibold">Not
+                        <Input className="mt-1" value={c.note} maxLength={200} placeholder="Fiyat seviyesi, güçlü yanı…" onChange={(e) => up({ note: e.target.value })} />
+                      </label>
+                    </div>
+                    <label className="mt-2 block text-[0.74rem] font-semibold">Online kampanya içerikleri
+                      <Textarea className="mt-1" rows={2} maxLength={400} value={c.campaigns} placeholder="Örn. “Trendyol Go’da 2. ürün yarım fiyat, 250 TL üzeri ücretsiz teslimat”" onChange={(e) => up({ campaigns: e.target.value })} />
+                    </label>
+                    <p className="mt-2 text-[0.74rem] font-semibold">Aynı ürün online fiyatları (TL)</p>
+                    <div className="mt-1 space-y-1.5">
+                      {c.items.map((it, k) => {
+                        const upItem = (patch: Partial<CompForm["items"][number]>) => up({ items: c.items.map((y, m) => (m === k ? { ...y, ...patch } : y)) });
+                        return (
+                          <div key={k} className="grid grid-cols-[2fr_1fr_1fr_auto] gap-2">
+                            <Input value={it.product} maxLength={80} placeholder="Ürün (örn. Tavuk döner dürüm)" onChange={(e) => upItem({ product: e.target.value })} />
+                            <Input inputMode="decimal" value={it.theirPrice} placeholder="Rakip fiyatı" onChange={(e) => upItem({ theirPrice: e.target.value })} />
+                            <Input inputMode="decimal" value={it.myPrice} placeholder="Benim fiyatım" onChange={(e) => upItem({ myPrice: e.target.value })} />
+                            <Button type="button" size="sm" variant="ghost" onClick={() => up({ items: c.items.filter((_, m) => m !== k) })}>×</Button>
+                          </div>
+                        );
+                      })}
+                      {c.items.length < 6 ? <Button type="button" size="sm" variant="ghost" onClick={() => up({ items: [...c.items, { product: "", theirPrice: "", myPrice: "" }] })}>+ Ürün fiyatı ekle</Button> : null}
+                    </div>
+                    <div className="mt-2 flex items-center justify-between">
+                      <span className="text-[0.72rem] text-muted">{c.hasLoc ? "Konum kayıtlı" : c.address ? "Konum kaydedince bulunacak" : "Adres girilmedi"}</span>
+                      <Button type="button" size="sm" variant="ghost" onClick={() => setComps(comps.length > 1 ? comps.filter((_, j) => j !== i) : [blankComp()])}>Rakibi kaldır</Button>
+                    </div>
+                  </div>
+                );
+              })}
+              {comps.length < 8 ? <Button type="button" size="sm" variant="secondary" onClick={() => setComps([...comps, blankComp()])}>Rakip ekle</Button> : null}
             </div>
           </div>
           <div className="sm:col-span-2"><Button type="submit" loading={busy}>Profili kaydet</Button></div>
@@ -2116,11 +2163,33 @@ function GrowthProfileCard({ d, post }: { d: BD; post: (r: string, b: Record<str
             const res = await fetch("/api/business", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: "growth_suggest" }) });
             const j = await res.json().catch(() => ({ ok: false }));
             setSBusy(false);
-            if (j.ok) setSug(j as { suggestions: GSug[]; warnings: string[]; market: string }); else toast.push({ title: j.error ?? "Öneriler hazırlanamadı", tone: "danger" });
+            if (j.ok) setSug(j as { suggestions: GSug[]; warnings: string[]; market: string; resilience: GRes | null }); else toast.push({ title: j.error ?? "Öneriler hazırlanamadı", tone: "danger" });
           }}>Kampanya ve reklam önerilerini hazırla</Button>
           {sug ? (
             <div className="mt-4 space-y-3">
               {sug.market ? <Notice tone="info" icon={<Icon.info size={16} />}>{sug.market}</Notice> : null}
+              {sug.resilience ? (
+                <div className="rounded-[6px] border border-line p-4">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <p className="text-[0.7rem] font-semibold uppercase tracking-[0.12em] text-muted">Rekabet dayanma gücü</p>
+                      <p className="mt-1 font-display text-[1.6rem] font-bold leading-none tabular">{sug.resilience.confidence < 30 ? <span className="text-[1rem] text-muted">Yetersiz veri</span> : <>{sug.resilience.score}<span className="text-[0.9rem] text-muted">/100</span> <Badge tone={sug.resilience.level === "Güçlü" ? "positive" : sug.resilience.level === "Orta" ? "warning" : "danger"}>{sug.resilience.level}</Badge></>}</p>
+                    </div>
+                    <p className="text-[0.76rem] text-muted">Veri güveni %{sug.resilience.confidence}{sug.resilience.confidence < 70 ? " — eksik alanları doldurdukça skor kesinleşir" : ""}</p>
+                  </div>
+                  <ul className="mt-3 space-y-2">
+                    {sug.resilience.factors.map((f) => (
+                      <li key={f.key}>
+                        <div className="flex items-center justify-between text-[0.8rem]"><span className="font-semibold">{f.label} <span className="font-normal text-muted">· ağırlık %{f.weight}</span></span><span className="tabular">{f.score == null ? "veri yok" : f.score}</span></div>
+                        <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-canvas"><div className="h-full rounded-full bg-accent" style={{ width: `${f.score ?? 0}%` }} /></div>
+                        <p className="mt-0.5 text-[0.74rem] text-muted">{f.note}</p>
+                      </li>
+                    ))}
+                  </ul>
+                  {sug.resilience.stress ? <p className="mt-3 rounded-[4px] bg-canvas p-2.5 text-[0.8rem]">{sug.resilience.stress}</p> : null}
+                  {sug.resilience.insights.length ? <ul className="mt-3 list-disc space-y-1 pl-5 text-[0.78rem] text-muted">{sug.resilience.insights.map((x) => <li key={x}>{x}</li>)}</ul> : null}
+                </div>
+              ) : null}
               {sug.warnings.map((w) => <Notice key={w} tone="warning" icon={<Icon.alert size={16} />}>{w}</Notice>)}
               {sug.suggestions.map((s2) => (
                 <div key={s2.id} className="rounded-[6px] border border-line p-4">

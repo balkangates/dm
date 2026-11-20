@@ -29,6 +29,10 @@ export default async function PricingPage() {
           fiyat üzerinden sipariş bakiyesi ekleyerek siparişe devam eder. Diğer paketlerde de aynı şekilde çalışır.
         </Notice>
 
+        <Notice tone="info" icon={<Icon.info size={16} />} title="İşletme kurmayı mı düşünüyorsun?" className="mb-4">
+          Bölge rekabet özeti, başabaş hesaplayıcı ve adım adım kuruluş planı için <a className="font-semibold text-accent underline" href="/isletme-kur">işletme kuranlar için yol haritasına</a> bak.
+        </Notice>
+
         <Notice tone="info" icon={<Icon.info size={16} />} className="mb-8">
           Müşteri ödemesi doğrudan işletmeye yapılır. DampingVar cashback, müşteri cüzdanı, ortak puan havuzu veya
           işletmeler arası mahsup sunmaz. Aşağıdaki tüm tutarlar <strong>işletmeye kesilen hizmet bedelleridir</strong>.
